@@ -34,7 +34,7 @@ targets:
         # value from your downloaded GoogleService-Info.plist (see README).
         CFBundleURLTypes:
           - CFBundleURLSchemes:
-              - REPLACE_WITH_REVERSED_CLIENT_ID
+              - com.googleusercontent.apps.222042395227-8rgoppfi1nod55sskq1rd8i0rqajctlm
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.burpengaryfruitmarket.loyalty
