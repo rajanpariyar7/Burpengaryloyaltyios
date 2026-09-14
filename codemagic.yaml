@@ -25,34 +25,33 @@ workflows:
         script: |
           brew install xcodegen
 
-name: Generate Xcode project from project.yml
-script: |
-  xcodegen generate
+      - name: Generate Xcode project from project.yml
+        script: |
+          xcodegen generate
 
-name: Set up code signing (App Store Connect API key integration)
-script: |
-  xcode-project use-profiles
+      - name: Set up code signing (App Store Connect API key integration)
+        script: |
+          xcode-project use-profiles
 
-name: Resolve Swift Package dependencies
-script: |
-  xcodebuild -resolvePackageDependencies -project "$XCODE_PROJECT"
+      - name: Resolve Swift Package dependencies
+        script: |
+          xcodebuild -resolvePackageDependencies -project "$XCODE_PROJECT"
 
-name: Increment build number
-script: |
-  agvtool new-version -all $BUILD_NUMBER
+      - name: Increment build number
+        script: |
+          agvtool new-version -all $BUILD_NUMBER
 
-name: Build ipa for distribution
-script: |
-  xcode-project build-ipa \
-    --project "$XCODE_PROJECT" \
-    --scheme "$XCODE_SCHEME"
+      - name: Build ipa for distribution
+        script: |
+          xcode-project build-ipa \
+            --project "$XCODE_PROJECT" \
+            --scheme "$XCODE_SCHEME"
 
-artifacts:
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
 
-build/ios/ipa/*.ipa
-/tmp/xcodebuild_logs/*.log
-
-publishing:
-app_store_connect:
-auth: integration          # references the App Store Connect API key you add
-submit_to_testflight: true # flip to submit_to_app_store: true when ready to release
+    publishing:
+      app_store_connect:
+        auth: integration          # references the App Store Connect API key you add
+        submit_to_testflight: true # flip to submit_to_app_store: true when ready to release
