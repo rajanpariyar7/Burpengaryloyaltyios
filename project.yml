@@ -28,13 +28,18 @@ targets:
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: false
         # TODO: replace REPLACE_WITH_REVERSED_CLIENT_ID with the REVERSED_CLIENT_ID
         # value from your downloaded GoogleService-Info.plist (see README).
         CFBundleURLTypes:
           - CFBundleURLSchemes:
-              - com.googleusercontent.apps.222042395227-8rgoppfi1nod55sskq1rd8i0rqajctlm
+              - REPLACE_WITH_REVERSED_CLIENT_ID
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.burpengaryfruitmarket.loyalty

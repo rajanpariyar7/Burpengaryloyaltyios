@@ -1,10 +1,8 @@
 workflows:
   ios-native-workflow:
-    name: Burpengary Market Loyalty App
+    name: Burpengary Loyalty - iOS Native
     max_build_duration: 60
     instance_type: mac_mini_m2
-    integrations:
-      app_store_connect: BurpengaryAppStore
     environment:
       ios_signing:
         distribution_type: app_store
@@ -12,7 +10,7 @@ workflows:
       vars:
         XCODE_PROJECT: "BurpengaryLoyalty.xcodeproj"
         XCODE_SCHEME: "BurpengaryLoyalty"
-        APP_STORE_APPLE_ID: 6810118060
+        APP_STORE_APPLE_ID: 0000000000  # replace with your App Store Connect app's Apple ID
       xcode: latest
     triggering:
       events:
