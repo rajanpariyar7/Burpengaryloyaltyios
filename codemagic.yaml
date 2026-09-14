@@ -1,0 +1,55 @@
+workflows:
+  ios-native-workflow:
+    name: Burpengary Loyalty - iOS Native
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.burpengaryfruitmarket.loyalty
+      vars:
+        XCODE_PROJECT: "BurpengaryLoyalty.xcodeproj"
+        XCODE_SCHEME: "BurpengaryLoyalty"
+        APP_STORE_APPLE_ID: 0000000000  # replace with your App Store Connect app's Apple ID
+      xcode: latest
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+    scripts:
+      - name: Install XcodeGen
+        script: |
+          brew install xcodegen
+
+      - name: Generate Xcode project from project.yml
+        script: |
+          xcodegen generate
+
+      - name: Set up code signing (App Store Connect API key integration)
+        script: |
+          xcode-project use-profiles
+
+      - name: Resolve Swift Package dependencies
+        script: |
+          xcodebuild -resolvePackageDependencies -project "$XCODE_PROJECT"
+
+      - name: Increment build number
+        script: |
+          agvtool new-version -all $BUILD_NUMBER
+
+      - name: Build ipa for distribution
+        script: |
+          xcode-project build-ipa \
+            --project "$XCODE_PROJECT" \
+            --scheme "$XCODE_SCHEME"
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+
+    publishing:
+      app_store_connect:
+        auth: integration          # references the App Store Connect API key you add
+        submit_to_testflight: true # flip to submit_to_app_store: true when ready to release
