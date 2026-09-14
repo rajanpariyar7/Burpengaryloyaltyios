@@ -10,7 +10,7 @@ workflows:
       vars:
         XCODE_PROJECT: "BurpengaryLoyalty.xcodeproj"
         XCODE_SCHEME: "BurpengaryLoyalty"
-        APP_STORE_APPLE_ID: 0000000000  # replace with your App Store Connect app's Apple ID
+        APP_STORE_APPLE_ID: 6810118060
       xcode: latest
     triggering:
       events:
