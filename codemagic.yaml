@@ -33,20 +33,6 @@ workflows:
         script: |
           brew install xcodegen
 
-      - name: Generate Xcode project from project.yml
-        script: |
-          set -e
-
-          xcodegen generate
-
-          echo "--- Checking for Assets.xcassets in generated project ---"
-
-          if grep -q "Assets.xcassets" BurpengaryLoyalty.xcodeproj/project.pbxproj; then
-            echo "XcodeGen included Assets.xcassets"
-          else
-            echo "XcodeGen did not include Assets.xcassets"
-          fi
-
       - name: Force-add Assets.xcassets to target
         script: |
           set -e
@@ -82,7 +68,6 @@ workflows:
             puts "Assets.xcassets reference already exists."
           else
             puts "Creating Assets.xcassets reference..."
-
             file_ref = resources_group.new_file(asset_path)
           end
 
@@ -92,7 +77,6 @@ workflows:
 
           unless already_added
             puts "Adding Assets.xcassets to Resources build phase..."
-
             target.resources_build_phase.add_file_reference(file_ref)
           else
             puts "Assets.xcassets already exists in Resources build phase."
