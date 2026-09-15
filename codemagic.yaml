@@ -28,6 +28,8 @@ workflows:
       - name: Generate Xcode project from project.yml
         script: |
           xcodegen generate
+          echo "--- Checking for Assets.xcassets in generated project ---"
+          grep -c "xcassets" BurpengaryLoyalty.xcodeproj/project.pbxproj || echo "NOT FOUND IN PROJECT"
 
       - name: Set up code signing (App Store Connect API key integration)
         script: |
