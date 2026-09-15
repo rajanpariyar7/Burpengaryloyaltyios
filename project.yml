@@ -20,7 +20,7 @@ targets:
     sources:
       - path: Sources
     resources:
-      - path: Resources
+      - path: Resources/Assets.xcassets
     info:
       path: Sources/Info.plist
       properties:
