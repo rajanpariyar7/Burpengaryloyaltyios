@@ -4,6 +4,11 @@ options:
   deploymentTarget:
     iOS: "16.0"
   createIntermediateGroups: true
+      - name: Generate Xcode project from project.yml
+        script: |
+          xcodegen generate
+          echo "--- Checking for Assets.xcassets in generated project ---"
+          grep -c "xcassets" BurpengaryLoyalty.xcodeproj/project.pbxproj || echo "NOT FOUND IN PROJECT"
 
 packages:
   Firebase:
