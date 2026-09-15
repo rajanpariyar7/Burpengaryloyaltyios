@@ -58,13 +58,16 @@ workflows:
           resources_group =
             project.main_group.find_subpath("Resources", true)
 
+          abort "ERROR: Resources group not found" unless resources_group
+
           file_ref = project.files.find do |file|
             file.path == asset_path
           end
 
           unless file_ref
             puts "Assets.xcassets reference not found."
-            puts "Creating: #{asset_path}"
+            puts "Creating reference: #{asset_path}"
+
             file_ref = resources_group.new_file(asset_path)
           else
             puts "Assets.xcassets reference already exists."
@@ -97,6 +100,14 @@ workflows:
           else
             echo "ERROR: Assets.xcassets STILL NOT FOUND"
             exit 1
+          fi
+
+          echo "--- Verifying AppIcon ---"
+
+          if grep -q "ASSETCATALOG_COMPILER_APPICON_NAME" BurpengaryLoyalty.xcodeproj/project.pbxproj; then
+            echo "SUCCESS: AppIcon configuration found"
+          else
+            echo "WARNING: AppIcon configuration not found"
           fi
 
           echo "--- Verifying AppIcon configuration ---"
