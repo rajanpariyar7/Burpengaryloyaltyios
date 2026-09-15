@@ -3,37 +3,110 @@ workflows:
     name: Burpengary Market Loyalty App
     max_build_duration: 60
     instance_type: mac_mini_m2
+
     integrations:
       app_store_connect: BurpengaryAppStore
+
     environment:
       ios_signing:
         distribution_type: app_store
         bundle_identifier: com.burpengaryfruitmarket.loyalty
+
       vars:
         XCODE_PROJECT: "BurpengaryLoyalty.xcodeproj"
         XCODE_SCHEME: "BurpengaryLoyalty"
         APP_STORE_APPLE_ID: 6810118060
+
       xcode: latest
+
     triggering:
       events:
         - push
+
       branch_patterns:
         - pattern: main
           include: true
+
     scripts:
+
       - name: Install XcodeGen
         script: |
           brew install xcodegen
 
       - name: Generate Xcode project from project.yml
         script: |
+          set -e
+
           xcodegen generate
-          echo "--- Checking for Assets.xcassets in generated project ---"
-          grep -c "xcassets" BurpengaryLoyalty.xcodeproj/project.pbxproj || echo "NOT FOUND IN PROJECT"
-    name: Force-add Assets.xcassets to target 
-script: | 
-ruby -e ' require "xcodeproj" project = Xcodeproj::Project.open("BurpengaryLoyalty.xcodeproj") target = project.targets.find { |t| t.name == "BurpengaryLoyalty" } group = project.main_group.find_subpath("Resources", true) file_ref = group.new_reference("Resources/Assets.xcassets") target.resources_build_phase.add_file_reference(file_ref) project.save ' echo "--- Re-checking for Assets.xcassets after manual injection ---" 
-grep -c "xcassets" BurpengaryLoyalty.xcodeproj/project.pbxproj || echo "STILL NOT FOUND"
+
+          echo "--- Checking generated project ---"
+          grep -c "Assets.xcassets" BurpengaryLoyalty.xcodeproj/project.pbxproj || true
+
+      - name: Force-add Assets.xcassets to target
+        script: |
+          set -e
+
+          echo "--- Force-adding Assets.xcassets with xcodeproj ---"
+
+          ruby <<'RUBY'
+          require "xcodeproj"
+
+          project_path = "BurpengaryLoyalty.xcodeproj"
+          asset_path = "Resources/Assets.xcassets"
+
+          project = Xcodeproj::Project.open(project_path)
+
+          target = project.targets.find do |t|
+            t.name == "BurpengaryLoyalty"
+          end
+
+          abort "ERROR: BurpengaryLoyalty target not found" unless target
+
+          # Find existing Assets.xcassets reference anywhere in the project.
+          existing_ref = project.files.find do |file|
+            file.path == asset_path ||
+            file.basename == "Assets.xcassets"
+          end
+
+          if existing_ref
+            puts "Assets.xcassets reference already exists."
+            file_ref = existing_ref
+          else
+            puts "Creating Assets.xcassets file reference..."
+
+            resources_group =
+              project.main_group.find_subpath("Resources", true)
+
+            file_ref =
+              resources_group.new_file(asset_path)
+          end
+
+          # Check whether it is already in the Resources build phase.
+          already_in_resources =
+            target.resources_build_phase.files.any? do |build_file|
+              build_file.file_ref == file_ref
+            end
+
+          unless already_in_resources
+            puts "Adding Assets.xcassets to Resources build phase..."
+            target.resources_build_phase.add_file_reference(file_ref)
+          else
+            puts "Assets.xcassets is already in Resources build phase."
+          end
+
+          project.save
+
+          puts "Project saved successfully."
+          RUBY
+
+          echo "--- Verifying Assets.xcassets ---"
+
+          if grep -q "Assets.xcassets" BurpengaryLoyalty.xcodeproj/project.pbxproj; then
+            echo "SUCCESS: Assets.xcassets found in project.pbxproj"
+          else
+            echo "ERROR: Assets.xcassets STILL NOT FOUND"
+            exit 1
+          fi
 
       - name: Set up code signing (App Store Connect API key integration)
         script: |
@@ -41,11 +114,13 @@ grep -c "xcassets" BurpengaryLoyalty.xcodeproj/project.pbxproj || echo "STILL NO
 
       - name: Resolve Swift Package dependencies
         script: |
-          xcodebuild -resolvePackageDependencies -project "$XCODE_PROJECT"
+          xcodebuild \
+            -resolvePackageDependencies \
+            -project "$XCODE_PROJECT"
 
       - name: Increment build number
         script: |
-          agvtool new-version -all $BUILD_NUMBER
+          agvtool new-version -all "$BUILD_NUMBER"
 
       - name: Build ipa for distribution
         script: |
@@ -59,5 +134,5 @@ grep -c "xcassets" BurpengaryLoyalty.xcodeproj/project.pbxproj || echo "STILL NO
 
     publishing:
       app_store_connect:
-        auth: integration          # references the App Store Connect API key you add
-        submit_to_testflight: true # flip to submit_to_app_store: true when ready to release
+        auth: integration
+        submit_to_testflight: true
