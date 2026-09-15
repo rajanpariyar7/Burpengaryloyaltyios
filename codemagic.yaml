@@ -30,6 +30,10 @@ workflows:
           xcodegen generate
           echo "--- Checking for Assets.xcassets in generated project ---"
           grep -c "xcassets" BurpengaryLoyalty.xcodeproj/project.pbxproj || echo "NOT FOUND IN PROJECT"
+    name: Force-add Assets.xcassets to target 
+script: | 
+ruby -e ' require "xcodeproj" project = Xcodeproj::Project.open("BurpengaryLoyalty.xcodeproj") target = project.targets.find { |t| t.name == "BurpengaryLoyalty" } group = project.main_group.find_subpath("Resources", true) file_ref = group.new_reference("Resources/Assets.xcassets") target.resources_build_phase.add_file_reference(file_ref) project.save ' echo "--- Re-checking for Assets.xcassets after manual injection ---" 
+grep -c "xcassets" BurpengaryLoyalty.xcodeproj/project.pbxproj || echo "STILL NOT FOUND"
 
       - name: Set up code signing (App Store Connect API key integration)
         script: |
