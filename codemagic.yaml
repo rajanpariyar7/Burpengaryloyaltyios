@@ -1,8 +1,9 @@
 workflows:
-  ios-workflow:
+  ios-native-workflow:
     name: Burpengary Market Loyalty App
 
     max_build_duration: 60
+
     instance_type: mac_mini_m2
 
     integrations:
@@ -16,8 +17,16 @@ workflows:
       vars:
         XCODE_PROJECT: "BurpengaryLoyalty.xcodeproj"
         XCODE_SCHEME: "BurpengaryLoyalty"
+        APP_STORE_APPLE_ID: "6810118060"
 
       xcode: latest
+
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
 
     scripts:
       - name: Install XcodeGen
@@ -28,27 +37,39 @@ workflows:
         script: |
           xcodegen generate
 
-      - name: Set up code signing
-        script: |
-          xcode-project use-profiles
-
-      - name: Verify generated project
+      - name: Verify generated Xcode project
         script: |
           echo "===== PROJECT ====="
           ls -la "$XCODE_PROJECT"
 
-          echo "===== SCHEME ====="
+          echo "===== SCHEMES ====="
           xcodebuild \
             -project "$XCODE_PROJECT" \
             -list
 
+          echo "===== ASSETS ====="
+          find Resources -name "Assets.xcassets" -print
+
+          echo "===== APPICON REFERENCE ====="
+          grep -n "AppIcon" "$XCODE_PROJECT/project.pbxproj" || true
+
           echo "===== FIREBASE REFERENCES ====="
-          grep -n "FirebaseCore" "$XCODE_PROJECT/project.pbxproj" || true
           grep -n "FirebaseAuth" "$XCODE_PROJECT/project.pbxproj" || true
           grep -n "FirebaseFirestore" "$XCODE_PROJECT/project.pbxproj" || true
+          grep -n "FirebaseMessaging" "$XCODE_PROJECT/project.pbxproj" || true
 
-          echo "===== ASSETS ====="
-          find . -name "Assets.xcassets" -print
+          echo "===== GOOGLE SIGN-IN ====="
+          grep -n "GoogleSignIn" "$XCODE_PROJECT/project.pbxproj" || true
+
+      - name: Set up code signing
+        script: |
+          xcode-project use-profiles
+
+      - name: Resolve Swift Package dependencies
+        script: |
+          xcodebuild \
+            -resolvePackageDependencies \
+            -project "$XCODE_PROJECT"
 
       - name: Build ipa for distribution
         script: |
