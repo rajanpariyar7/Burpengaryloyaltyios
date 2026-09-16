@@ -1,0 +1,42 @@
+name: BurpengaryLoyalty
+options:
+  bundleIdPrefix: com.burpengary
+  deploymentTarget:
+    iOS: "16.0"
+
+settings:
+  MARKETING_VERSION: "1.0.0"
+  CURRENT_PROJECT_VERSION: "1"
+
+packages:
+  Firebase:
+    url: https://github.com/firebase/firebase-ios-sdk
+    from: 10.29.0
+
+targets:
+  BurpengaryLoyalty:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+    resources:
+      - Resources
+    info:
+      path: Sources/Info.plist
+    settings:
+      base:
+        # TODO: replace with your real bundle ID (must match the iOS app
+        # you register in the Firebase console, matching Burpengary-Fruit-Market-Loyalty-android-native's project)
+        PRODUCT_BUNDLE_IDENTIFIER: com.burpengary.loyalty
+        # TODO: replace with your Apple Developer Team ID
+        DEVELOPMENT_TEAM: "A9YM3Z9BTP"
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        INFOPLIST_KEY_UILaunchScreen_Generation: NO
+    dependencies:
+      - package: Firebase
+        product: FirebaseAuth
+      - package: Firebase
+        product: FirebaseFirestore
+      - package: Firebase
+        product: FirebaseCore
