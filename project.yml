@@ -22,8 +22,6 @@ targets:
 
     sources:
       - path: Sources
-
-    resources:
       - path: Resources/Assets.xcassets
 
     info:
