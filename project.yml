@@ -45,6 +45,11 @@ targets:
 
         NSCameraUsageDescription: The camera is used to scan customer membership QR codes and barcodes at the register.
 
+        # The app only uses standard HTTPS, so it is exempt from export compliance.
+        # Without this key TestFlight holds the build for "Missing Compliance" and
+        # the beta review submission is rejected.
+        ITSAppUsesNonExemptEncryption: false
+
         UIBackgroundModes:
           - remote-notification
 
