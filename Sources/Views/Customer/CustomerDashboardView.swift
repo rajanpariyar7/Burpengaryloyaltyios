@@ -328,6 +328,7 @@ struct CustomerProfileTab: View {
     @ObservedObject var viewModel: LoyaltyViewModel
     let user: User
 
+    @State private var currentPassword = ""
     @State private var newPassword = ""
 
     var body: some View {
@@ -350,15 +351,19 @@ struct CustomerProfileTab: View {
                         Text("Change password")
                             .font(.headline)
                             .foregroundColor(Palette.extraDarkGreen)
+                        SecureField("Current password", text: $currentPassword)
+                            .padding(12)
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Palette.borderSlate))
                         SecureField("New password", text: $newPassword)
                             .padding(12)
                             .overlay(RoundedRectangle(cornerRadius: 10).stroke(Palette.borderSlate))
                         Button("Update password") {
-                            viewModel.changeUserPassword(email: user.email, newPassword: newPassword)
+                            viewModel.changeOwnPassword(currentPassword: currentPassword, newPassword: newPassword)
+                            currentPassword = ""
                             newPassword = ""
                         }
                         .buttonStyle(PrimaryButtonStyle())
-                        .disabled(newPassword.count < 6)
+                        .disabled(currentPassword.isEmpty || newPassword.count < 6)
                     }
                 }
 

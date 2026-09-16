@@ -1,10 +1,46 @@
 import Foundation
 import FirebaseFirestore
 
+enum LoyaltyError: LocalizedError {
+    case userNotFound
+    case insufficientPoints(available: Int)
+    case insufficientStamps(available: Int)
+    case belowRedemptionThreshold(threshold: Int)
+    case notAuthorized
+    case invalidInput(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .userNotFound:
+            return "That customer could not be found."
+        case .insufficientPoints(let available):
+            return "Not enough points. Balance is \(available)."
+        case .insufficientStamps(let available):
+            return "Not enough stamps. Balance is \(available)."
+        case .belowRedemptionThreshold(let threshold):
+            return "A minimum of \(threshold) points is required to redeem."
+        case .notAuthorized:
+            return "You do not have permission to perform this action."
+        case .invalidInput(let reason):
+            return reason
+        }
+    }
+}
+
 /// Firestore access layer, mirroring the collections used by the Android client:
 /// `users`, `rewards`, `offers`, `categories`, `transactions`, `auditLogs` and `settings/main`.
+///
+/// Balance mutations run inside Firestore transactions so concurrent registers cannot
+/// clobber each other, and they only touch balance fields rather than rewriting the
+/// whole user document.
 final class LoyaltyRepository {
     private let db = Firestore.firestore()
+
+    private struct Balances {
+        var points: Int
+        var stamps: Int
+        var lifetimeStamps: Int
+    }
 
     // MARK: - Listeners
 
@@ -48,6 +84,15 @@ final class LoyaltyRepository {
             }
     }
 
+    func observeTransactions(email: String, _ handler: @escaping ([PointTransaction]) -> Void) -> ListenerRegistration {
+        db.collection("transactions")
+            .whereField("userEmail", isEqualTo: email)
+            .addSnapshotListener { snapshot, _ in
+                let transactions = snapshot?.documents.compactMap { try? $0.data(as: PointTransaction.self) } ?? []
+                handler(transactions.sorted { $0.timestamp > $1.timestamp })
+            }
+    }
+
     func observeAuditLogs(_ handler: @escaping ([AuditLog]) -> Void) -> ListenerRegistration {
         db.collection("auditLogs")
             .order(by: "timestamp", descending: true)
@@ -80,48 +125,103 @@ final class LoyaltyRepository {
     }
 
     func createUser(_ user: User) async throws {
-        try db.collection("users").document(user.email).setData(from: user)
+        try db.collection("users").document(user.email).setData(from: user, merge: true)
     }
 
     func updateUser(_ user: User) async throws {
-        try db.collection("users").document(user.email).setData(from: user)
+        try db.collection("users").document(user.email).setData(from: user, merge: true)
+    }
+
+    func updateRole(email: String, role: Role) async throws {
+        try await db.collection("users").document(email).updateData(["role": role.rawValue])
+    }
+
+    /// Atomically applies a balance change; `change` may throw to abort the transaction.
+    private func mutateBalances(email: String, change: @escaping (Balances) throws -> Balances) async throws {
+        guard !email.isEmpty else { throw LoyaltyError.userNotFound }
+        let reference = db.collection("users").document(email)
+
+        _ = try await db.runTransaction { transaction, errorPointer in
+            do {
+                let snapshot = try transaction.getDocument(reference)
+                guard let data = snapshot.data() else { throw LoyaltyError.userNotFound }
+                let current = Balances(
+                    points: data["points"] as? Int ?? 0,
+                    stamps: data["stamps"] as? Int ?? 0,
+                    lifetimeStamps: data["lifetimeStamps"] as? Int ?? 0
+                )
+                let updated = try change(current)
+                transaction.updateData(
+                    [
+                        "points": updated.points,
+                        "stamps": updated.stamps,
+                        "lifetimeStamps": updated.lifetimeStamps
+                    ],
+                    forDocument: reference
+                )
+                return nil
+            } catch {
+                errorPointer?.pointee = error as NSError
+                return nil
+            }
+        }
     }
 
     func addStamp(email: String) async throws {
-        guard var current = await user(email: email) else { return }
-        current.stamps += 1
-        current.lifetimeStamps += 1
-        try await updateUser(current)
+        try await mutateBalances(email: email) { current in
+            var updated = current
+            updated.stamps += 1
+            updated.lifetimeStamps += 1
+            return updated
+        }
     }
 
     func resetStamps(email: String) async throws {
-        guard var current = await user(email: email) else { return }
-        current.stamps = 0
-        try await updateUser(current)
+        try await mutateBalances(email: email) { current in
+            var updated = current
+            updated.stamps = 0
+            return updated
+        }
     }
 
     func addPoints(email: String, points: Int) async throws {
-        guard var current = await user(email: email) else { return }
-        current.points += points
-        try await updateUser(current)
+        try await mutateBalances(email: email) { current in
+            var updated = current
+            updated.points += points
+            return updated
+        }
     }
 
     func redeemReward(email: String, reward: Reward) async throws {
-        guard var current = await user(email: email) else { return }
-        if reward.costInStamps > 0, current.stamps >= reward.costInStamps {
-            current.stamps -= reward.costInStamps
-        } else if reward.costInPoints > 0, current.points >= reward.costInPoints {
-            current.points -= reward.costInPoints
-        } else {
-            return
+        try await mutateBalances(email: email) { current in
+            var updated = current
+            if reward.costInStamps > 0 {
+                guard current.stamps >= reward.costInStamps else {
+                    throw LoyaltyError.insufficientStamps(available: current.stamps)
+                }
+                updated.stamps -= reward.costInStamps
+            } else {
+                guard current.points >= reward.costInPoints else {
+                    throw LoyaltyError.insufficientPoints(available: current.points)
+                }
+                updated.points -= reward.costInPoints
+            }
+            return updated
         }
-        try await updateUser(current)
     }
 
-    func redeemPoints(email: String, points: Int) async throws {
-        guard var current = await user(email: email), current.points >= points else { return }
-        current.points -= points
-        try await updateUser(current)
+    func redeemPoints(email: String, points: Int, threshold: Int) async throws {
+        guard points > 0 else { throw LoyaltyError.invalidInput("Enter a positive number of points.") }
+        guard points >= threshold else { throw LoyaltyError.belowRedemptionThreshold(threshold: threshold) }
+
+        try await mutateBalances(email: email) { current in
+            guard current.points >= points else {
+                throw LoyaltyError.insufficientPoints(available: current.points)
+            }
+            var updated = current
+            updated.points -= points
+            return updated
+        }
     }
 
     // MARK: - Catalog
@@ -170,43 +270,11 @@ final class LoyaltyRepository {
         try db.collection("settings").document("main").setData(from: settings)
     }
 
-    /// Seeds settings and demo content the first time the store is used, matching
-    /// the Android `initializeDb()`. Fails silently when security rules reject the write.
+    /// Seeds the settings document the first time the store is used, matching the Android
+    /// `initializeDb()`. Fails silently when security rules reject the write.
     func initializeDb() async {
-        do {
-            let settings = try await db.collection("settings").document("main").getDocument()
-            if !settings.exists {
-                try await updateSettings(PointSettings())
-            }
-
-            if await user(email: "admin@example.com") == nil {
-                try await createUser(User(email: "admin@example.com", name: "Store Manager", role: .admin))
-                try await createUser(User(email: "cashier@example.com", name: "Market Cashier", role: .cashier))
-
-                try await insertReward(Reward(
-                    title: "Free Coffee",
-                    description: "Get a free medium coffee at the market cafe.",
-                    costInStamps: 10
-                ))
-                try await insertReward(Reward(
-                    title: "$5 Off Produce",
-                    description: "Get $5 off your next fresh produce purchase.",
-                    costInPoints: 500
-                ))
-                try await addOffer(Offer(
-                    title: "Fresh Strawberries",
-                    price: "$1.99",
-                    category: "FRUITS",
-                    description: "OFFER: Amazing value! $1.99 per punnet!"
-                ))
-                try await insertTransaction(PointTransaction(
-                    userEmail: "customer@example.com",
-                    description: "Purchase: $5.0 by cashier cashier@example.com",
-                    pointChange: 50
-                ))
-            }
-        } catch {
-            return
-        }
+        guard let snapshot = try? await db.collection("settings").document("main").getDocument(),
+              !snapshot.exists else { return }
+        try? await updateSettings(PointSettings())
     }
 }

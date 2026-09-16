@@ -51,6 +51,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 @main
 struct BurpengaryApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var viewModel = LoyaltyViewModel()
 
     var body: some Scene {
@@ -59,6 +60,11 @@ struct BurpengaryApp: App {
                 .onOpenURL { url in
                     _ = GIDSignIn.sharedInstance.handle(url)
                 }
+        }
+        .onChange(of: scenePhase) { phase in
+            if phase == .active {
+                viewModel.enforceCashierAccess()
+            }
         }
     }
 }

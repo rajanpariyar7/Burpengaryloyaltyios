@@ -20,27 +20,37 @@ final class LoyaltyViewModel: ObservableObject {
     private let repository = LoyaltyRepository()
     private let auth = Auth.auth()
     private var authListener: AuthStateDidChangeListenerHandle?
-    private var listeners: [ListenerRegistration] = []
-    private var userListener: ListenerRegistration?
+    private var sessionListeners: [ListenerRegistration] = []
+    private var staffListeners: [ListenerRegistration] = []
     private var currentUserEmail: String?
+    private var cashierWindowTimer: Timer?
 
     var isSignedIn: Bool { currentUser != nil }
+    var isStaff: Bool { (currentUser?.role ?? .customer) != .customer }
 
     init() {
-        startGlobalListeners()
         authListener = auth.addStateDidChangeListener { [weak self] _, user in
-            guard let self else { return }
-            Task { @MainActor in
-                self.bind(email: user?.email)
+            Task { @MainActor [weak self] in
+                self?.bind(email: user?.email)
             }
         }
-        Task { await repository.initializeDb() }
     }
 
-    // MARK: - Wiring
+    // MARK: - Session wiring
 
-    private func startGlobalListeners() {
-        listeners = [
+    /// Listeners are attached only once a user is authenticated, and the collections that
+    /// expose other members' data are attached only for staff roles.
+    private func bind(email: String?) {
+        guard email != currentUserEmail else { return }
+        currentUserEmail = email
+        tearDownSession()
+
+        guard let email else {
+            currentUser = nil
+            return
+        }
+
+        sessionListeners = [
             repository.observePointSettings { [weak self] settings in
                 Task { @MainActor in
                     self?.pointSettings = settings
@@ -56,6 +66,43 @@ final class LoyaltyViewModel: ObservableObject {
             repository.observeCategories { [weak self] categories in
                 Task { @MainActor in self?.categories = categories }
             },
+            repository.observeTransactions(email: email) { [weak self] transactions in
+                Task { @MainActor in
+                    guard self?.isStaff == false else { return }
+                    self?.allTransactions = transactions
+                }
+            }
+        ]
+        if let userListener = repository.observeUser(email: email, { [weak self] user in
+            Task { @MainActor in self?.apply(user: user) }
+        }) {
+            sessionListeners.append(userListener)
+        }
+
+        startCashierWindowTimer()
+        Task { await repository.initializeDb() }
+    }
+
+    private func apply(user: User?) {
+        let previousRole = currentUser?.role
+        currentUser = user
+        if user?.role != previousRole {
+            attachStaffListenersIfNeeded()
+        }
+        enforceCashierAccess()
+    }
+
+    private func attachStaffListenersIfNeeded() {
+        staffListeners.forEach { $0.remove() }
+        staffListeners = []
+
+        guard isStaff else {
+            allUsers = []
+            allCustomers = []
+            auditLogs = []
+            return
+        }
+        staffListeners = [
             repository.observeAllUsers { [weak self] users in
                 Task { @MainActor in self?.allUsers = users }
             },
@@ -71,27 +118,34 @@ final class LoyaltyViewModel: ObservableObject {
         ]
     }
 
-    private func bind(email: String?) {
-        guard email != currentUserEmail else { return }
-        currentUserEmail = email
-        userListener?.remove()
-        userListener = nil
+    private func tearDownSession() {
+        (sessionListeners + staffListeners).forEach { $0.remove() }
+        sessionListeners = []
+        staffListeners = []
+        cashierWindowTimer?.invalidate()
+        cashierWindowTimer = nil
+        rewards = []
+        offers = []
+        categories = []
+        allUsers = []
+        allCustomers = []
+        allTransactions = []
+        auditLogs = []
+    }
 
-        guard let email else {
-            currentUser = nil
-            return
-        }
-        userListener = repository.observeUser(email: email) { [weak self] user in
-            Task { @MainActor in
-                self?.currentUser = user
-                self?.enforceCashierAccess()
-            }
+    // MARK: - Cashier access window
+
+    /// Cashier accounts may only be used while cashier login is enabled and inside the
+    /// configured window. A timer re-checks the window because neither Firestore listener
+    /// fires simply because the closing time passed.
+    private func startCashierWindowTimer() {
+        cashierWindowTimer?.invalidate()
+        cashierWindowTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.enforceCashierAccess() }
         }
     }
 
-    /// Cashier accounts may only be used while cashier login is enabled and inside the
-    /// configured window; outside of it the session is terminated, like on Android.
-    private func enforceCashierAccess() {
+    func enforceCashierAccess() {
         guard let user = currentUser, user.role == .cashier else { return }
         let settings = pointSettings ?? PointSettings()
 
@@ -105,12 +159,7 @@ final class LoyaltyViewModel: ObservableObject {
     }
 
     static func isTime(_ now: Date = Date(), withinStart start: String, end: String) -> Bool {
-        func minutes(_ value: String) -> Int? {
-            let parts = value.split(separator: ":")
-            guard parts.count == 2, let hour = Int(parts[0]), let minute = Int(parts[1]) else { return nil }
-            return hour * 60 + minute
-        }
-        guard let startMinutes = minutes(start), let endMinutes = minutes(end) else { return true }
+        guard let startMinutes = minutesOfDay(start), let endMinutes = minutesOfDay(end) else { return true }
         let components = Calendar.current.dateComponents([.hour, .minute], from: now)
         let nowMinutes = (components.hour ?? 0) * 60 + (components.minute ?? 0)
 
@@ -120,12 +169,19 @@ final class LoyaltyViewModel: ObservableObject {
         return nowMinutes >= startMinutes && nowMinutes <= endMinutes
     }
 
+    static func minutesOfDay(_ value: String) -> Int? {
+        let parts = value.split(separator: ":")
+        guard parts.count == 2,
+              let hour = Int(parts[0]), (0...23).contains(hour),
+              let minute = Int(parts[1]), (0...59).contains(minute) else { return nil }
+        return hour * 60 + minute
+    }
+
     private func forceSignOut(reason: String) {
         try? auth.signOut()
         currentUser = nil
         currentUserEmail = nil
-        userListener?.remove()
-        userListener = nil
+        tearDownSession()
         notify("Error", reason)
     }
 
@@ -134,7 +190,21 @@ final class LoyaltyViewModel: ObservableObject {
         LocalNotifier.show(title: title, message: message)
     }
 
+    private func report(_ error: Error) {
+        notify("Error", error.localizedDescription)
+    }
+
+    private func requireRole(_ roles: Set<Role>) throws -> User {
+        guard let user = currentUser, roles.contains(user.role) else { throw LoyaltyError.notAuthorized }
+        return user
+    }
+
     // MARK: - Authentication
+
+    static func isValidEmail(_ value: String) -> Bool {
+        let pattern = #"^[^@\s]+@[^@\s]+\.[^@\s]+$"#
+        return value.range(of: pattern, options: .regularExpression) != nil
+    }
 
     func login(email: String, password: String) {
         guard !email.isEmpty, !password.isEmpty else {
@@ -144,9 +214,7 @@ final class LoyaltyViewModel: ObservableObject {
         Task {
             do {
                 try await auth.signIn(withEmail: email, password: password)
-                if let user = await repository.user(email: email) {
-                    notify("Success", "Logged in as \(user.name)")
-                } else {
+                if await repository.user(email: email) == nil {
                     try await repository.createUser(User(
                         email: email,
                         name: String(email.prefix(while: { $0 != "@" })),
@@ -154,7 +222,7 @@ final class LoyaltyViewModel: ObservableObject {
                     ))
                 }
             } catch {
-                notify("Error", error.localizedDescription)
+                report(error)
             }
         }
     }
@@ -164,8 +232,7 @@ final class LoyaltyViewModel: ObservableObject {
             do {
                 let result = try await GIDSignIn.sharedInstance.signIn(withPresenting: viewController)
                 guard let idToken = result.user.idToken?.tokenString else {
-                    notify("Error", "Google Sign-In failed")
-                    return
+                    throw LoyaltyError.invalidInput("Google Sign-In did not return an identity token.")
                 }
                 let credential = GoogleAuthProvider.credential(
                     withIDToken: idToken,
@@ -173,48 +240,47 @@ final class LoyaltyViewModel: ObservableObject {
                 )
                 let authResult = try await auth.signIn(with: credential)
                 guard let email = authResult.user.email else { return }
-                let name = authResult.user.displayName ?? String(email.prefix(while: { $0 != "@" }))
 
-                if let existing = await repository.user(email: email) {
-                    notify("Success", "Logged in as \(existing.name)")
-                } else {
+                if await repository.user(email: email) == nil {
+                    let name = authResult.user.displayName ?? String(email.prefix(while: { $0 != "@" }))
                     try await repository.createUser(User(email: email, name: name, role: .customer, points: 5))
-                    notify("Success", "Account created! 5 bonus points awarded.")
+                    notify("Welcome!", "Account created — 5 bonus points awarded.")
                 }
             } catch {
-                notify("Error", error.localizedDescription)
+                report(error)
             }
         }
     }
 
-    func signup(emailOrPhone: String, phone: String, name: String) {
-        let identifier = emailOrPhone.isEmpty ? phone : emailOrPhone
-        guard !identifier.isEmpty else {
-            notify("Error", "Email or Phone required")
+    func signup(email: String, password: String, name: String, phone: String) {
+        guard Self.isValidEmail(email) else {
+            notify("Error", "Enter a valid email address. Phone-only signup is not supported.")
             return
         }
-        let defaultPassword = "password"
+        guard password.count >= 6 else {
+            notify("Error", "Choose a password of at least 6 characters.")
+            return
+        }
         Task {
             do {
-                try await auth.createUser(withEmail: identifier, password: defaultPassword)
+                try await auth.createUser(withEmail: email, password: password)
                 try await repository.createUser(User(
-                    email: identifier,
-                    passwordHash: defaultPassword,
+                    email: email,
                     name: name,
                     role: .customer,
                     points: 5,
                     phone: phone
                 ))
-                notify("Success", "Account created! 5 bonus points awarded. Your password is \(defaultPassword)")
+                notify("Welcome!", "Account created — 5 bonus points awarded.")
             } catch {
-                notify("Error", error.localizedDescription)
+                report(error)
             }
         }
     }
 
     func resetPassword(email: String) {
-        guard !email.isEmpty else {
-            notify("Error", "Please enter your email to reset password")
+        guard Self.isValidEmail(email) else {
+            notify("Error", "Enter your email address to reset your password")
             return
         }
         Task {
@@ -222,7 +288,7 @@ final class LoyaltyViewModel: ObservableObject {
                 try await auth.sendPasswordReset(withEmail: email)
                 notify("Success", "Password reset email sent")
             } catch {
-                notify("Error", error.localizedDescription)
+                report(error)
             }
         }
     }
@@ -233,32 +299,61 @@ final class LoyaltyViewModel: ObservableObject {
             GIDSignIn.sharedInstance.signOut()
             currentUser = nil
             currentUserEmail = nil
-            userListener?.remove()
-            userListener = nil
+            tearDownSession()
         } catch {
-            notify("Error", "Failed to logout")
+            report(error)
         }
     }
 
-    func changeUserPassword(email: String, newPassword: String) {
+    /// Changes the signed-in member's own credential through Firebase Auth; the Firestore
+    /// document never stores a password.
+    func changeOwnPassword(currentPassword: String, newPassword: String) {
+        guard let user = auth.currentUser, let email = user.email else { return }
+        guard newPassword.count >= 6 else {
+            notify("Error", "Choose a password of at least 6 characters.")
+            return
+        }
         Task {
-            guard var user = await repository.user(email: email) else { return }
-            user.passwordHash = newPassword
-            try? await repository.updateUser(user)
-            try? await repository.logAudit(action: "Changed password for \(email)", by: currentUserEmail ?? "system")
-            notify("Success", "Password updated for \(email)")
+            do {
+                let credential = EmailAuthProvider.credential(withEmail: email, password: currentPassword)
+                try await user.reauthenticate(with: credential)
+                try await user.updatePassword(to: newPassword)
+                notify("Success", "Your password has been updated.")
+            } catch {
+                report(error)
+            }
+        }
+    }
+
+    /// Staff cannot set another member's password directly; Firebase sends them a reset link.
+    func sendPasswordReset(to email: String) {
+        Task {
+            do {
+                _ = try requireRole([.admin, .superAdmin])
+                try await auth.sendPasswordReset(withEmail: email)
+                notify("Success", "Password reset email sent to \(email)")
+            } catch {
+                report(error)
+            }
         }
     }
 
     func createCashier(email: String, name: String, password: String) {
         Task {
             do {
-                try await auth.createUser(withEmail: email, password: password)
-                try await repository.createUser(User(email: email, passwordHash: password, name: name, role: .cashier))
-                try await repository.logAudit(action: "Created cashier \(email)", by: currentUserEmail ?? "system")
+                let actor = try requireRole([.admin, .superAdmin])
+                guard Self.isValidEmail(email) else {
+                    throw LoyaltyError.invalidInput("Enter a valid cashier email address.")
+                }
+                guard password.count >= 6 else {
+                    throw LoyaltyError.invalidInput("Choose a password of at least 6 characters.")
+                }
+                try await StaffAccountService.createAccount(email: email, password: password)
+                try await repository.createUser(User(email: email, name: name, role: .cashier))
+                try await repository.logAudit(action: "Created cashier \(email)", by: actor.email)
                 notify("Success", "Cashier \(name) created.")
             } catch {
-                notify("Error", error.localizedDescription)
+                report(error)
             }
         }
     }
@@ -267,65 +362,83 @@ final class LoyaltyViewModel: ObservableObject {
 
     func addStamp(to email: String) {
         Task {
-            try? await repository.addStamp(email: email)
-            try? await repository.insertTransaction(PointTransaction(
-                userEmail: email,
-                description: "Received a stamp",
-                pointChange: 0
-            ))
-            notify("Stamp Added", "Customer \(email) received a stamp.")
+            do {
+                let actor = try requireRole([.cashier, .admin, .superAdmin])
+                try await repository.addStamp(email: email)
+                try await repository.insertTransaction(PointTransaction(
+                    userEmail: email,
+                    description: "Received a stamp",
+                    pointChange: 0
+                ))
+                try await repository.logAudit(action: "Added a stamp for \(email)", by: actor.email)
+                notify("Stamp Added", "Customer \(email) received a stamp.")
+            } catch {
+                report(error)
+            }
         }
     }
 
     func processPurchase(customerEmail: String, amount: Double) {
         Task {
-            let cashier = currentUserEmail ?? "unknown_cashier"
-            let pointsEarned = Int(amount * Double(pointSettings?.pointsPerDollar ?? 10))
-            try? await repository.addPoints(email: customerEmail, points: pointsEarned)
+            do {
+                let actor = try requireRole([.cashier, .admin, .superAdmin])
+                guard amount > 0 else { throw LoyaltyError.invalidInput("Enter a purchase amount above $0.") }
 
-            let description = "Purchase: \(amount) by cashier \(cashier)"
-            try? await repository.insertTransaction(PointTransaction(
-                userEmail: customerEmail,
-                description: description,
-                pointChange: pointsEarned
-            ))
-            try? await repository.logAudit(
-                action: "Added \(pointsEarned) points to \(customerEmail) (Cashier: \(cashier))",
-                by: cashier
-            )
-            notify("Purchase Processed", "Added \(pointsEarned) points to \(customerEmail).")
+                let pointsEarned = Int(amount * Double(pointSettings?.pointsPerDollar ?? 10))
+                try await repository.addPoints(email: customerEmail, points: pointsEarned)
+                try await repository.insertTransaction(PointTransaction(
+                    userEmail: customerEmail,
+                    description: "Purchase: \(amount) by cashier \(actor.email)",
+                    pointChange: pointsEarned
+                ))
+                try await repository.logAudit(
+                    action: "Added \(pointsEarned) points to \(customerEmail) (Cashier: \(actor.email))",
+                    by: actor.email
+                )
+                notify("Purchase Processed", "Added \(pointsEarned) points to \(customerEmail).")
+            } catch {
+                report(error)
+            }
         }
     }
 
     func redeemReward(_ reward: Reward) {
         Task {
-            guard let email = currentUserEmail else { return }
-            try? await repository.redeemReward(email: email, reward: reward)
-
-            try? await repository.insertTransaction(PointTransaction(
-                userEmail: email,
-                description: "Redeemed: \(reward.title)",
-                pointChange: reward.costInPoints > 0 ? -reward.costInPoints : 0
-            ))
-            try? await repository.logAudit(action: "Self-Redeemed Voucher: \(reward.title)", by: email)
-            notify("Reward Redeemed!", "You successfully redeemed: \(reward.title)")
+            do {
+                guard let email = currentUserEmail else { throw LoyaltyError.notAuthorized }
+                try await repository.redeemReward(email: email, reward: reward)
+                try await repository.insertTransaction(PointTransaction(
+                    userEmail: email,
+                    description: "Redeemed: \(reward.title)",
+                    pointChange: reward.costInPoints > 0 ? -reward.costInPoints : 0
+                ))
+                try await repository.logAudit(action: "Self-Redeemed Voucher: \(reward.title)", by: email)
+                notify("Reward Redeemed!", "You successfully redeemed: \(reward.title)")
+            } catch {
+                report(error)
+            }
         }
     }
 
     func redeemPointsAsCashier(email: String, points: Int) {
         Task {
-            let cashier = currentUserEmail ?? "unknown_cashier"
-            try? await repository.redeemPoints(email: email, points: points)
-            try? await repository.insertTransaction(PointTransaction(
-                userEmail: email,
-                description: "Register Redemption by \(cashier)",
-                pointChange: -points
-            ))
-            try? await repository.logAudit(
-                action: "Redeemed \(points) points for customer \(email) (Cashier: \(cashier))",
-                by: cashier
-            )
-            notify("Success", "Redeemed \(points) points for \(email)")
+            do {
+                let actor = try requireRole([.cashier, .admin, .superAdmin])
+                let threshold = pointSettings?.redemptionThreshold ?? 100
+                try await repository.redeemPoints(email: email, points: points, threshold: threshold)
+                try await repository.insertTransaction(PointTransaction(
+                    userEmail: email,
+                    description: "Register Redemption by \(actor.email)",
+                    pointChange: -points
+                ))
+                try await repository.logAudit(
+                    action: "Redeemed \(points) points for customer \(email) (Cashier: \(actor.email))",
+                    by: actor.email
+                )
+                notify("Success", "Redeemed \(points) points for \(email)")
+            } catch {
+                report(error)
+            }
         }
     }
 
@@ -333,28 +446,61 @@ final class LoyaltyViewModel: ObservableObject {
 
     func addOffer(title: String, price: String, description: String, category: String = "General", imageUrl: String? = nil) {
         Task {
-            try? await repository.addOffer(Offer(
-                title: title,
-                price: price,
-                category: category,
-                description: description,
-                imageUrl: imageUrl
-            ))
-            try? await repository.logAudit(action: "Added new offer: \(title)", by: currentUserEmail ?? "system")
-            notify("Offer Added", "\(title) is now available.")
+            do {
+                let actor = try requireRole([.admin, .superAdmin])
+                guard !title.trimmingCharacters(in: .whitespaces).isEmpty else {
+                    throw LoyaltyError.invalidInput("An offer needs a title.")
+                }
+                try await repository.addOffer(Offer(
+                    title: title,
+                    price: price,
+                    category: category,
+                    description: description,
+                    imageUrl: imageUrl
+                ))
+                try await repository.logAudit(action: "Added new offer: \(title)", by: actor.email)
+                notify("Offer Added", "\(title) is now available.")
+            } catch {
+                report(error)
+            }
         }
     }
 
     func deleteOffer(_ offer: Offer) {
-        Task { try? await repository.deleteOffer(offer) }
+        Task {
+            do {
+                let actor = try requireRole([.admin, .superAdmin])
+                try await repository.deleteOffer(offer)
+                try await repository.logAudit(action: "Deleted offer: \(offer.title)", by: actor.email)
+            } catch {
+                report(error)
+            }
+        }
     }
 
     func addCategory(name: String) {
-        Task { try? await repository.insertCategory(name: name) }
+        Task {
+            do {
+                _ = try requireRole([.admin, .superAdmin])
+                guard !name.trimmingCharacters(in: .whitespaces).isEmpty else {
+                    throw LoyaltyError.invalidInput("A category needs a name.")
+                }
+                try await repository.insertCategory(name: name)
+            } catch {
+                report(error)
+            }
+        }
     }
 
     func deleteCategory(_ category: Category) {
-        Task { try? await repository.deleteCategory(category) }
+        Task {
+            do {
+                _ = try requireRole([.admin, .superAdmin])
+                try await repository.deleteCategory(category)
+            } catch {
+                report(error)
+            }
+        }
     }
 
     // MARK: - Administration
@@ -369,27 +515,86 @@ final class LoyaltyViewModel: ObservableObject {
         cashierLoginEndTime: String = "18:00"
     ) {
         Task {
-            try? await repository.updateSettings(PointSettings(
-                pointsPerDollar: pointsPerDollar,
-                discountPer100Points: discountPer100Points,
-                redemptionThreshold: redemptionThreshold,
-                adminWriteEnabled: adminWriteEnabled,
-                cashierLoginEnabled: cashierLoginEnabled,
-                cashierLoginStartTime: cashierLoginStartTime,
-                cashierLoginEndTime: cashierLoginEndTime
-            ))
-            try? await repository.logAudit(action: "Updated system settings", by: currentUserEmail ?? "system")
-            notify("Settings Saved", "System configuration has been updated.")
+            do {
+                let actor = try requireRole([.admin, .superAdmin])
+                let current = pointSettings ?? PointSettings()
+
+                if actor.role == .admin, !current.adminWriteEnabled,
+                   pointsPerDollar != current.pointsPerDollar
+                    || discountPer100Points != current.discountPer100Points
+                    || redemptionThreshold != current.redemptionThreshold {
+                    throw LoyaltyError.notAuthorized
+                }
+                if actor.role == .admin, adminWriteEnabled != current.adminWriteEnabled {
+                    throw LoyaltyError.notAuthorized
+                }
+
+                let settings = try Self.validatedSettings(
+                    pointsPerDollar: pointsPerDollar,
+                    discountPer100Points: discountPer100Points,
+                    redemptionThreshold: redemptionThreshold,
+                    adminWriteEnabled: adminWriteEnabled,
+                    cashierLoginEnabled: cashierLoginEnabled,
+                    cashierLoginStartTime: cashierLoginStartTime,
+                    cashierLoginEndTime: cashierLoginEndTime
+                )
+                try await repository.updateSettings(settings)
+                try await repository.logAudit(action: "Updated system settings", by: actor.email)
+                notify("Settings Saved", "System configuration has been updated.")
+            } catch {
+                report(error)
+            }
         }
+    }
+
+    static func validatedSettings(
+        pointsPerDollar: Int,
+        discountPer100Points: Double,
+        redemptionThreshold: Int,
+        adminWriteEnabled: Bool,
+        cashierLoginEnabled: Bool,
+        cashierLoginStartTime: String,
+        cashierLoginEndTime: String
+    ) throws -> PointSettings {
+        guard (1...1000).contains(pointsPerDollar) else {
+            throw LoyaltyError.invalidInput("Points per $1 must be between 1 and 1000.")
+        }
+        guard (1...100_000).contains(redemptionThreshold) else {
+            throw LoyaltyError.invalidInput("The redemption threshold must be between 1 and 100000 points.")
+        }
+        guard discountPer100Points > 0, discountPer100Points <= 100 else {
+            throw LoyaltyError.invalidInput("The discount per 100 points must be between $0.01 and $100.")
+        }
+        guard minutesOfDay(cashierLoginStartTime) != nil, minutesOfDay(cashierLoginEndTime) != nil else {
+            throw LoyaltyError.invalidInput("Cashier login times must use 24-hour HH:mm format.")
+        }
+        return PointSettings(
+            pointsPerDollar: pointsPerDollar,
+            discountPer100Points: discountPer100Points,
+            redemptionThreshold: redemptionThreshold,
+            adminWriteEnabled: adminWriteEnabled,
+            cashierLoginEnabled: cashierLoginEnabled,
+            cashierLoginStartTime: cashierLoginStartTime,
+            cashierLoginEndTime: cashierLoginEndTime
+        )
     }
 
     func changeUserRole(email: String, role: Role) {
         Task {
-            guard var user = await repository.user(email: email) else { return }
-            user.role = role
-            try? await repository.updateUser(user)
-            try? await repository.logAudit(action: "Changed role of \(email) to \(role.rawValue)", by: currentUserEmail ?? "system")
-            notify("Role Updated", "\(email) is now a \(role.rawValue).")
+            do {
+                let actor = try requireRole([.superAdmin])
+                guard email != actor.email else {
+                    throw LoyaltyError.invalidInput("You cannot change your own role.")
+                }
+                try await repository.updateRole(email: email, role: role)
+                try await repository.logAudit(
+                    action: "Changed role of \(email) to \(role.rawValue)",
+                    by: actor.email
+                )
+                notify("Role Updated", "\(email) is now a \(role.rawValue).")
+            } catch {
+                report(error)
+            }
         }
     }
 

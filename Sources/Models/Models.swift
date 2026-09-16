@@ -10,7 +10,6 @@ enum Role: String, Codable, CaseIterable {
 struct User: Codable, Identifiable, Equatable {
     var id: String { email }
     var email: String = ""
-    var passwordHash: String = ""
     var name: String = ""
     var role: Role = .customer
     var stamps: Int = 0

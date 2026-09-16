@@ -43,6 +43,20 @@ Firestore mapper serializes it.
 Defaults: 10 points per $1, $1.00 discount per 100 points, 100 point redemption
 threshold.
 
+Balance changes (points, stamps, redemptions) run inside Firestore transactions
+and only write balance fields, so two registers cannot overwrite each other.
+Passwords live in Firebase Auth only — members choose their own at signup and
+change it with reauthentication; no password is stored in Firestore.
+
+## Security rules
+
+`firestore.rules` holds the rules that enforce the role model server side; the
+in-app role checks are a UX guard only. Deploy them with:
+
+```bash
+firebase deploy --only firestore:rules
+```
+
 ## Building
 
 1. `brew install xcodegen`

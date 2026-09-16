@@ -1,0 +1,84 @@
+rules_version = '2';
+
+// Client-side role checks in the app are a UX guard only. These rules are the
+// enforcement point and must be deployed with `firebase deploy --only firestore:rules`.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function roleOf(email) {
+      return get(/databases/$(database)/documents/users/$(email)).data.role;
+    }
+
+    function callerRole() {
+      return roleOf(request.auth.token.email);
+    }
+
+    function isStaff() {
+      return signedIn() && callerRole() in ['CASHIER', 'ADMIN', 'SUPER_ADMIN'];
+    }
+
+    function isAdmin() {
+      return signedIn() && callerRole() in ['ADMIN', 'SUPER_ADMIN'];
+    }
+
+    function isSuperAdmin() {
+      return signedIn() && callerRole() == 'SUPER_ADMIN';
+    }
+
+    match /users/{email} {
+      allow read: if signedIn() && (request.auth.token.email == email || isStaff());
+      // Members may only create their own document and may not grant themselves a role.
+      allow create: if signedIn()
+        && request.auth.token.email == email
+        && request.resource.data.role == 'CUSTOMER';
+      // Members may edit profile fields but never balances or their role.
+      allow update: if signedIn()
+        && request.auth.token.email == email
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.points == resource.data.points
+        && request.resource.data.stamps == resource.data.stamps;
+      // Staff adjust balances; only a super admin changes roles.
+      allow update: if isStaff() && request.resource.data.role == resource.data.role;
+      allow update: if isSuperAdmin();
+      allow create: if isAdmin() && request.resource.data.role != 'SUPER_ADMIN';
+      allow delete: if isSuperAdmin();
+    }
+
+    match /transactions/{id} {
+      allow read: if signedIn()
+        && (resource.data.userEmail == request.auth.token.email || isStaff());
+      allow create: if isStaff();
+      allow update, delete: if false;
+    }
+
+    match /auditLogs/{id} {
+      allow read: if isAdmin();
+      allow create: if isStaff();
+      allow update, delete: if false;
+    }
+
+    match /offers/{id} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    match /categories/{id} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    match /rewards/{id} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    match /settings/{id} {
+      allow read: if signedIn();
+      allow write: if isSuperAdmin()
+        || (isAdmin() && resource.data.adminWriteEnabled == true);
+    }
+  }
+}

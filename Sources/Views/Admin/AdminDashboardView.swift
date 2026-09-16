@@ -337,12 +337,16 @@ struct AdminSettingsTab: View {
                     VStack(alignment: .leading, spacing: 12) {
                         labelledField("Cashier name", text: $cashierName)
                         labelledField("Cashier email", text: $cashierEmail, keyboard: .emailAddress)
-                        labelledField("Temporary password", text: $cashierPassword)
+                        secureLabelledField("Temporary password (min 6 characters)", text: $cashierPassword)
                         Button("Create cashier account") {
                             viewModel.createCashier(email: cashierEmail, name: cashierName, password: cashierPassword)
                             cashierEmail = ""; cashierName = ""; cashierPassword = ""
                         }
                         .buttonStyle(PrimaryButtonStyle())
+                        .disabled(cashierName.isEmpty || cashierEmail.isEmpty || cashierPassword.count < 6)
+                        Text("The cashier signs in with this password and can change it from their profile.")
+                            .font(.caption)
+                            .foregroundColor(.gray)
                     }
                 }
 
@@ -384,6 +388,15 @@ struct AdminSettingsTab: View {
                 .keyboardType(keyboard)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
+                .padding(12)
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Palette.borderSlate))
+        }
+    }
+
+    private func secureLabelledField(_ label: String, text: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label).font(.caption).foregroundColor(.gray)
+            SecureField(label, text: text)
                 .padding(12)
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(Palette.borderSlate))
         }
