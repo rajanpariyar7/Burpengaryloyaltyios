@@ -27,22 +27,25 @@ workflows:
       branch_patterns:
         - pattern: main
           include: true
+
     scripts:
-  - name: Install XcodeGen
-    script: |
-      brew install xcodegen
+      - name: Install XcodeGen
+        script: |
+          brew install xcodegen
 
-  - name: Generate Xcode project from project.yml
-    script: |
-      xcodegen generate
+      - name: Generate Xcode project from project.yml
+        script: |
+          xcodegen generate
 
-  - name: Set build number from App Store Connect
-    script: |
-      LATEST_BUILD_NUMBER=$(app-store-connect get-latest-testflight-build-number "$APP_STORE_APPLE_ID")
-      agvtool new-version -all $(($LATEST_BUILD_NUMBER + 1))
+      # NOTE: requires `VERSIONING_SYSTEM: "apple-generic"` under
+      # settings.base in project.yml, or agvtool will fail here.
+      - name: Set build number from App Store Connect
+        script: |
+          LATEST_BUILD_NUMBER=$(app-store-connect get-latest-testflight-build-number "$APP_STORE_APPLE_ID")
+          agvtool new-version -all $(($LATEST_BUILD_NUMBER + 1))
 
-  - name: Verify generated Xcode project
-    script: |
+      - name: Verify generated Xcode project
+        script: |
           echo "===== PROJECT ====="
           ls -la "$XCODE_PROJECT"
 
