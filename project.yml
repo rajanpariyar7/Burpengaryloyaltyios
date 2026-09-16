@@ -21,8 +21,9 @@ targets:
     platform: iOS
 
     sources:
-      - path: Sources
-      - path: Resources/Assets.xcassets
+  - path: Sources
+  - path: Resources/Assets.xcassets
+  - path: Resources/GoogleService-Info.plist
 
     info:
       path: Sources/Info.plist
