@@ -1,3 +1,21 @@
+      - name: Diagnose Xcode project
+        script: |
+          echo "===== Firebase references ====="
+          grep -R "FirebaseCore" "$XCODE_PROJECT/project.pbxproj" || true
+          grep -R "FirebaseAuth" "$XCODE_PROJECT/project.pbxproj" || true
+          grep -R "FirebaseFirestore" "$XCODE_PROJECT/project.pbxproj" || true
+
+          echo "===== AppIcon references ====="
+          grep -R "AppIcon" "$XCODE_PROJECT/project.pbxproj" || true
+
+          echo "===== Assets references ====="
+          grep -R "Assets.xcassets" "$XCODE_PROJECT/project.pbxproj" || true
+
+          echo "===== Info.plist ====="
+          cat Sources/Info.plist
+
+          echo "===== Project files ====="
+          find Sources Resources -maxdepth 2 -type f | sort
 name: BurpengaryLoyalty
 
 options:
