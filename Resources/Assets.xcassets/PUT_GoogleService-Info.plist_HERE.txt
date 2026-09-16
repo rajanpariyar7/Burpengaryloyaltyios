@@ -1,5 +1,0 @@
-Download GoogleService-Info.plist from the Firebase console
-(same Firebase project used by Burpengary-Fruit-Market-Loyalty-android-native)
-for an iOS app registered under the bundle ID you set in project.yml,
-then drop the real GoogleService-Info.plist file in this Resources/ folder,
-replacing this placeholder. Delete this .txt file once it's in place.
