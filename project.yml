@@ -1,22 +1,4 @@
-      - name: Diagnose Xcode project
-        script: |
-          echo "===== Firebase references ====="
-          grep -R "FirebaseCore" "$XCODE_PROJECT/project.pbxproj" || true
-          grep -R "FirebaseAuth" "$XCODE_PROJECT/project.pbxproj" || true
-          grep -R "FirebaseFirestore" "$XCODE_PROJECT/project.pbxproj" || true
-
-          echo "===== AppIcon references ====="
-          grep -R "AppIcon" "$XCODE_PROJECT/project.pbxproj" || true
-
-          echo "===== Assets references ====="
-          grep -R "Assets.xcassets" "$XCODE_PROJECT/project.pbxproj" || true
-
-          echo "===== Info.plist ====="
-          cat Sources/Info.plist
-
-          echo "===== Project files ====="
-          find Sources Resources -maxdepth 2 -type f | sort
-name: Burpengary Market Loyalty App
+name: BurpengaryLoyalty
 
 options:
   bundleIdPrefix: com.burpengaryfruitmarket.loyalty
@@ -49,7 +31,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.burpengaryfruitmarket.loyalty
-        DEVELOPMENT_TEAM: A9YM3Z9BTP
+        DEVELOPMENT_TEAM: "A9YM3Z9BTP"
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1"
         INFOPLIST_KEY_UILaunchScreen_Generation: NO
@@ -57,9 +39,7 @@ targets:
     dependencies:
       - package: Firebase
         product: FirebaseCore
-
       - package: Firebase
         product: FirebaseAuth
-
       - package: Firebase
         product: FirebaseFirestore
