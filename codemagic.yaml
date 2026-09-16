@@ -1,36 +1,63 @@
 workflows:
   ios-workflow:
     name: Burpengary Market Loyalty App
+
     max_build_duration: 60
+
     instance_type: mac_mini_m2
+
     integrations:
-      app_store_connect: BurpengaryAppStore # TODO: name of your App Store Connect API key integration in Codemagic
+      app_store_connect: BurpengaryAppStore
+
     environment:
       ios_signing:
         distribution_type: app_store
-        bundle_identifier: com.burpengaryfruitmarket.loyalty # TODO: must match project.yml
+        bundle_identifier: com.burpengaryfruitmarket.loyalty
+
       vars:
         XCODE_PROJECT: "BurpengaryLoyalty.xcodeproj"
         XCODE_SCHEME: "BurpengaryLoyalty"
+
       xcode: latest
+
     scripts:
+
       - name: Install XcodeGen
         script: |
           brew install xcodegen
+
+      - name: Clean old generated Xcode project
+        script: |
+          rm -rf "$XCODE_PROJECT"
+          rm -rf ~/Library/Developer/Xcode/DerivedData/*
+          rm -rf ~/Library/Caches/org.swift.swiftpm
+          rm -f Package.resolved
+
       - name: Generate Xcode project from project.yml
         script: |
           xcodegen generate
+
+      - name: Verify Firebase dependencies
+        script: |
+          echo "Checking generated Firebase package references..."
+          grep -n "FirebaseCore" "$XCODE_PROJECT/project.pbxproj" || true
+          grep -n "FirebaseAuth" "$XCODE_PROJECT/project.pbxproj" || true
+          grep -n "FirebaseFirestore" "$XCODE_PROJECT/project.pbxproj" || true
+
       - name: Set up code signing
         script: |
           xcode-project use-profiles
+
       - name: Build ipa for distribution
         script: |
           xcode-project build-ipa \
             --project "$XCODE_PROJECT" \
             --scheme "$XCODE_SCHEME"
+
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
+
     publishing:
       app_store_connect:
         auth: integration
