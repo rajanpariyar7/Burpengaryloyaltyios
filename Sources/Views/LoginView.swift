@@ -1,102 +1,118 @@
 import SwiftUI
 
 struct LoginView: View {
-    @EnvironmentObject var authViewModel: AuthViewModel
-
-    @State private var isSignUpMode = false
-    @State private var name = ""
-    @State private var email = ""
-    @State private var password = ""
-
+    @ObservedObject var viewModel: LoyaltyViewModel
+    @State private var email = UserDefaults.standard.string(forKey: "saved_email") ?? ""
+    @State private var password = UserDefaults.standard.string(forKey: "saved_password") ?? ""
+    @State private var rememberMe = UserDefaults.standard.bool(forKey: "remember_me")
+    @State private var passwordVisible = false
+    
+    @FocusState private var isPasswordFieldFocused: Bool
+    
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 20) {
-                Spacer()
-
-                VStack(spacing: 4) {
-                    Text("Burpengary Fruit Market")
-                        .font(.title2).bold()
-                    Text("Loyalty & Rewards")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-
-                VStack(spacing: 12) {
-                    if isSignUpMode {
-                        TextField("Full name", text: $name)
-                            .textContentType(.name)
-                            .textFieldStyle(.roundedBorder)
-                    }
-
-                    TextField("Email", text: $email)
-                        .textContentType(.emailAddress)
-                        .keyboardType(.emailAddress)
-                        .autocapitalization(.none)
-                        .textFieldStyle(.roundedBorder)
-
-                    SecureField("Password", text: $password)
-                        .textContentType(isSignUpMode ? .newPassword : .password)
-                        .textFieldStyle(.roundedBorder)
-                }
-                .padding(.horizontal)
-
-                if let error = authViewModel.errorMessage {
-                    Text(error)
-                        .font(.footnote)
-                        .foregroundStyle(.red)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal)
-                }
-
-                Button {
-                    Task {
-                        if isSignUpMode {
-                            await authViewModel.signUp(name: name, email: email, password: password)
-                        } else {
-                            await authViewModel.signIn(email: email, password: password)
-                        }
-                    }
-                } label: {
-                    if authViewModel.isLoading {
-                        ProgressView()
-                            .frame(maxWidth: .infinity)
-                    } else {
-                        Text(isSignUpMode ? "Create account" : "Sign in")
-                            .frame(maxWidth: .infinity)
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .padding(.horizontal)
-                .disabled(email.isEmpty || password.isEmpty || authViewModel.isLoading)
-
-                Button(isSignUpMode ? "Already have an account? Sign in" : "New here? Create an account") {
-                    isSignUpMode.toggle()
-                }
-                .font(.footnote)
-
-                HStack {
-                    VStack { Divider() }
-                    Text("or").font(.caption).foregroundStyle(.secondary)
-                    VStack { Divider() }
-                }
-                .padding(.horizontal)
-
-                Button {
-                    Task { await authViewModel.signInWithGoogle() }
-                } label: {
-                    HStack {
-                        Image(systemName: "g.circle.fill")
-                        Text("Sign in with Google")
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .padding(.horizontal)
-                .disabled(authViewModel.isLoading)
-
-                Spacer()
-                Spacer()
+        VStack(spacing: 24) {
+            Image(systemName: "basket.fill") // Replace with actual logo asset Name in Xcode
+                .resizable()
+                .scaledToFit()
+                .frame(width: 80, height: 80)
+                .foregroundColor(.green)
+            
+            VStack(spacing: 4) {
+                Text("Welcome to")
+                    .font(.subheadline)
+                    .foregroundColor(.gray)
+                Text("Burpengary Market")
+                    .font(.title)
+                    .fontWeight(.heavy)
+                    .foregroundColor(Color(red: 0.1, green: 0.3, blue: 0.1)) // Dark Green
+                Text("Your FRESH Shop")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(.green)
             }
+            
+            VStack(spacing: 16) {
+                TextField("Username or Email", text: $email)
+                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                    .keyboardType(.emailAddress)
+                    .submitLabel(.next)
+                    .onSubmit {
+                        isPasswordFieldFocused = true
+                    }
+                
+                HStack {
+                    if passwordVisible {
+                        TextField("Password", text: $password)
+                    } else {
+                        SecureField("Password", text: $password)
+                    }
+                    Button(action: { passwordVisible.toggle() }) {
+                        Image(systemName: passwordVisible ? "eye.fill" : "eye.slash.fill")
+                            .foregroundColor(.gray)
+                    }
+                }
+                .padding(8)
+                .background(Color(UIColor.systemBackground))
+                .cornerRadius(8)
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(UIColor.separator), lineWidth: 1))
+                .focused($isPasswordFieldFocused)
+                .submitLabel(.done)
+                .onSubmit {
+                    performLogin()
+                }
+                
+                HStack {
+                    Toggle(isOn: $rememberMe) {
+                        Text("Remember me")
+                            .font(.footnote)
+                    }
+                    .toggleStyle(CheckboxStyle())
+                    
+                    Spacer()
+                    
+                    Button("Forgot Password?") {
+                        viewModel.resetPassword(email: email)
+                    }
+                    .font(.footnote)
+                    .foregroundColor(.green)
+                }
+                
+                Button(action: performLogin) {
+                    Text("Login")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.green)
+                        .cornerRadius(12)
+                }
+            }
+            .padding(.horizontal)
+        }
+        .padding()
+    }
+    
+    private func performLogin() {
+        if rememberMe {
+            UserDefaults.standard.set(email, forKey: "saved_email")
+            UserDefaults.standard.set(password, forKey: "saved_password")
+            UserDefaults.standard.set(true, forKey: "remember_me")
+        } else {
+            UserDefaults.standard.removeObject(forKey: "saved_email")
+            UserDefaults.standard.removeObject(forKey: "saved_password")
+            UserDefaults.standard.set(false, forKey: "remember_me")
+        }
+        viewModel.login(email: email, pass: password)
+    }
+}
+
+struct CheckboxStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack {
+            Image(systemName: configuration.isOn ? "checkmark.square.fill" : "square")
+                .foregroundColor(configuration.isOn ? .green : .gray)
+                .onTapGesture { configuration.isOn.toggle() }
+            configuration.label
         }
     }
 }

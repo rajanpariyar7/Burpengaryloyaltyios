@@ -1,45 +1,47 @@
 import SwiftUI
 
 struct HomeView: View {
-    let user: AppUser
+    @ObservedObject var viewModel: LoyaltyViewModel
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Welcome back,")
-                            .foregroundStyle(.secondary)
-                        Text(user.name)
-                            .font(.title).bold()
-                    }
+        NavigationView {
+            VStack(spacing: 20) {
+                if let user = viewModel.currentUser {
+                    Text("Welcome, \(user.name.isEmpty ? user.email : user.name)!")
+                        .font(.title2)
+                        .fontWeight(.semibold)
+                        .multilineTextAlignment(.center)
 
-                    HStack(spacing: 12) {
-                        balanceCard(title: "Stamps", value: "\(user.stamps)", tint: .brown)
-                        balanceCard(title: "Points", value: "\(user.points)", tint: .green)
+                    HStack(spacing: 24) {
+                        VStack {
+                            Text("\(user.points)")
+                                .font(.largeTitle)
+                                .fontWeight(.bold)
+                                .foregroundColor(.green)
+                            Text("Points")
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                        }
+                        VStack {
+                            Text("\(user.stamps)")
+                                .font(.largeTitle)
+                                .fontWeight(.bold)
+                                .foregroundColor(.green)
+                            Text("Stamps")
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                        }
                     }
-
-                    Text("Lifetime stamps earned: \(user.lifetimeStamps)")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                    .padding()
+                    .background(Color(UIColor.secondarySystemBackground))
+                    .cornerRadius(16)
+                } else {
+                    ProgressView()
                 }
-                .padding()
+                Spacer()
             }
-            .navigationTitle("Home")
+            .padding()
+            .navigationTitle("Burpengary Market")
         }
-    }
-
-    private func balanceCard(title: String, value: String, tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.system(size: 34, weight: .bold))
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding()
-        .background(tint.opacity(0.12))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 }

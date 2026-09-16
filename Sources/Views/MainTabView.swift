@@ -1,34 +1,27 @@
 import SwiftUI
 
 struct MainTabView: View {
-    let user: AppUser
+    @ObservedObject var viewModel: LoyaltyViewModel
 
     var body: some View {
         TabView {
-            HomeView(user: user)
+            HomeView(viewModel: viewModel)
                 .tabItem { Label("Home", systemImage: "house.fill") }
 
-            RewardsView()
-                .tabItem { Label("Rewards", systemImage: "star.fill") }
+            RewardsView(viewModel: viewModel)
+                .tabItem { Label("Rewards", systemImage: "gift.fill") }
 
-            OffersView()
+            OffersView(viewModel: viewModel)
                 .tabItem { Label("Offers", systemImage: "tag.fill") }
 
-            // CASHIER, ADMIN, SUPER_ADMIN get an extra tab — matches the
-            // Android app's role-gated staff screens.
-            if user.role.isStaff {
-                StaffToolsView()
-                    .tabItem { Label("Staff Tools", systemImage: "person.badge.key.fill") }
+            if let role = viewModel.currentUser?.role, role != .customer {
+                StaffToolsView(viewModel: viewModel)
+                    .tabItem { Label("Staff", systemImage: "wrench.and.screwdriver.fill") }
             }
 
-            // ADMIN, SUPER_ADMIN only — cashier login window, loyalty rules.
-            if user.role.canManageSettings {
-                AdminSettingsView()
-                    .tabItem { Label("Admin", systemImage: "gearshape.fill") }
-            }
-
-            ProfileView(user: user)
-                .tabItem { Label("Profile", systemImage: "person.crop.circle.fill") }
+            ProfileView(viewModel: viewModel)
+                .tabItem { Label("Profile", systemImage: "person.fill") }
         }
+        .accentColor(.green)
     }
 }

@@ -1,40 +1,39 @@
 import SwiftUI
+import FirebaseFirestore
 
 struct RewardsView: View {
-    @StateObject private var viewModel = RewardsViewModel()
+    @ObservedObject var viewModel: LoyaltyViewModel
+    @State private var rewards: [Reward] = []
+    private let db = Firestore.firestore()
 
     var body: some View {
-        NavigationStack {
-            List {
-                if let error = viewModel.errorMessage {
-                    Text(error).foregroundStyle(.red)
-                }
-                ForEach(viewModel.rewards) { reward in
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(reward.title).font(.headline)
+        NavigationView {
+            List(rewards) { reward in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(reward.title).font(.headline)
+                    if !reward.description.isEmpty {
                         Text(reward.description)
                             .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                        HStack {
-                            Text(reward.costDisplay)
-                                .font(.caption).bold()
-                            Spacer()
-                            Button("Redeem") {
-                                Task { await viewModel.redeem(reward) }
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
-                        }
+                            .foregroundColor(.gray)
                     }
-                    .padding(.vertical, 4)
+                    Text(reward.costInPoints > 0 ? "\(reward.costInPoints) points" : "\(reward.costInStamps) stamps")
+                        .font(.caption)
+                        .foregroundColor(.green)
                 }
+                .padding(.vertical, 4)
             }
             .navigationTitle("Rewards")
-            .overlay {
-                if viewModel.isLoading { ProgressView() }
+            .onAppear(perform: fetchRewards)
+        }
+    }
+
+    private func fetchRewards() {
+        db.collection("rewards").addSnapshotListener { snapshot, error in
+            if let error = error {
+                print("Error fetching rewards: \(error)")
+                return
             }
-            .refreshable { await viewModel.load() }
-            .task { await viewModel.load() }
+            self.rewards = snapshot?.documents.compactMap { try? $0.data(as: Reward.self) } ?? []
         }
     }
 }

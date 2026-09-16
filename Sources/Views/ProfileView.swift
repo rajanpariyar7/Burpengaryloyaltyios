@@ -1,30 +1,22 @@
 import SwiftUI
 
 struct ProfileView: View {
-    let user: AppUser
-    @EnvironmentObject var authViewModel: AuthViewModel
+    @ObservedObject var viewModel: LoyaltyViewModel
 
     var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    LabeledContent("Name", value: user.name)
-                    LabeledContent("Email", value: user.email)
-                    LabeledContent("Role", value: user.role.displayName)
-                    if !user.phone.isEmpty {
+        NavigationView {
+            Form {
+                if let user = viewModel.currentUser {
+                    Section("Account") {
+                        LabeledContent("Name", value: user.name)
+                        LabeledContent("Email", value: user.email)
                         LabeledContent("Phone", value: user.phone)
+                        LabeledContent("Role", value: user.role.rawValue)
                     }
                 }
-
-                Section("Balance") {
-                    LabeledContent("Stamps", value: "\(user.stamps)")
-                    LabeledContent("Points", value: "\(user.points)")
-                    LabeledContent("Lifetime stamps", value: "\(user.lifetimeStamps)")
-                }
-
                 Section {
-                    Button("Sign out", role: .destructive) {
-                        authViewModel.signOut()
+                    Button("Log Out", role: .destructive) {
+                        viewModel.logout()
                     }
                 }
             }

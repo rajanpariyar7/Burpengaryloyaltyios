@@ -1,40 +1,44 @@
 import SwiftUI
+import FirebaseFirestore
 
 struct OffersView: View {
-    @StateObject private var viewModel = OffersViewModel()
+    @ObservedObject var viewModel: LoyaltyViewModel
+    @State private var offers: [Offer] = []
+    private let db = Firestore.firestore()
 
     var body: some View {
-        NavigationStack {
-            List {
-                if let error = viewModel.errorMessage {
-                    Text(error).foregroundStyle(.red)
-                }
-                ForEach(viewModel.offers) { offer in
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text(offer.title).font(.headline)
-                            Spacer()
-                            Text(offer.price)
-                                .font(.subheadline).bold()
-                        }
-                        Text(offer.category)
-                            .font(.caption2).bold()
-                            .padding(.horizontal, 8).padding(.vertical, 3)
-                            .background(.orange.opacity(0.15))
-                            .clipShape(Capsule())
+        NavigationView {
+            List(offers) { offer in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(offer.title).font(.headline)
+                    Text(offer.category)
+                        .font(.caption)
+                        .foregroundColor(.green)
+                    if !offer.description.isEmpty {
                         Text(offer.description)
                             .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .foregroundColor(.gray)
                     }
-                    .padding(.vertical, 4)
+                    if !offer.price.isEmpty {
+                        Text(offer.price)
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                    }
                 }
+                .padding(.vertical, 4)
             }
             .navigationTitle("Offers")
-            .overlay {
-                if viewModel.isLoading { ProgressView() }
+            .onAppear(perform: fetchOffers)
+        }
+    }
+
+    private func fetchOffers() {
+        db.collection("offers").addSnapshotListener { snapshot, error in
+            if let error = error {
+                print("Error fetching offers: \(error)")
+                return
             }
-            .refreshable { await viewModel.load() }
-            .task { await viewModel.load() }
+            self.offers = snapshot?.documents.compactMap { try? $0.data(as: Offer.self) } ?? []
         }
     }
 }
