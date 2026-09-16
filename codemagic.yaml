@@ -35,7 +35,6 @@ workflows:
       - name: Generate Xcode project from project.yml
         script: |
           xcodegen generate
-
      - name: Set build number from App Store Connect
        script: |
           LATEST_BUILD_NUMBER=$(app-store-connect get-latest-testflight-build-number "$APP_STORE_APPLE_ID")
