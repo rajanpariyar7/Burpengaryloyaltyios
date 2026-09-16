@@ -3,7 +3,6 @@ workflows:
     name: Burpengary Market Loyalty App
 
     max_build_duration: 60
-
     instance_type: mac_mini_m2
 
     integrations:
@@ -32,6 +31,24 @@ workflows:
       - name: Set up code signing
         script: |
           xcode-project use-profiles
+
+      - name: Verify generated project
+        script: |
+          echo "===== PROJECT ====="
+          ls -la "$XCODE_PROJECT"
+
+          echo "===== SCHEME ====="
+          xcodebuild \
+            -project "$XCODE_PROJECT" \
+            -list
+
+          echo "===== FIREBASE REFERENCES ====="
+          grep -n "FirebaseCore" "$XCODE_PROJECT/project.pbxproj" || true
+          grep -n "FirebaseAuth" "$XCODE_PROJECT/project.pbxproj" || true
+          grep -n "FirebaseFirestore" "$XCODE_PROJECT/project.pbxproj" || true
+
+          echo "===== ASSETS ====="
+          find . -name "Assets.xcassets" -print
 
       - name: Build ipa for distribution
         script: |
