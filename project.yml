@@ -27,7 +27,7 @@ targets:
       base:
         # TODO: replace with your real bundle ID (must match the iOS app
         # you register in the Firebase console, matching Burpengary-Fruit-Market-Loyalty-android-native's project)
-        PRODUCT_BUNDLE_IDENTIFIER: com.burpengary.loyalty
+        PRODUCT_BUNDLE_IDENTIFIER: com.burpengaryfruitmarket.loyalty
         # TODO: replace with your Apple Developer Team ID
         DEVELOPMENT_TEAM: "A9YM3Z9BTP"
         SWIFT_VERSION: "5.0"
