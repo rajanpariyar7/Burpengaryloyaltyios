@@ -1,6 +1,6 @@
 name: BurpengaryLoyalty
 options:
-  bundleIdPrefix: com.burpengary
+  bundleIdPrefix: com.burpengaryfruitmarket.loyalty
   deploymentTarget:
     iOS: "16.0"
 
