@@ -21,28 +21,13 @@ workflows:
       xcode: latest
 
     scripts:
-
       - name: Install XcodeGen
         script: |
           brew install xcodegen
 
-      - name: Clean old generated Xcode project
-        script: |
-          rm -rf "$XCODE_PROJECT"
-          rm -rf ~/Library/Developer/Xcode/DerivedData/*
-          rm -rf ~/Library/Caches/org.swift.swiftpm
-          rm -f Package.resolved
-
       - name: Generate Xcode project from project.yml
         script: |
           xcodegen generate
-
-      - name: Verify Firebase dependencies
-        script: |
-          echo "Checking generated Firebase package references..."
-          grep -n "FirebaseCore" "$XCODE_PROJECT/project.pbxproj" || true
-          grep -n "FirebaseAuth" "$XCODE_PROJECT/project.pbxproj" || true
-          grep -n "FirebaseFirestore" "$XCODE_PROJECT/project.pbxproj" || true
 
       - name: Set up code signing
         script: |
