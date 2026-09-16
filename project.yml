@@ -16,7 +16,7 @@
 
           echo "===== Project files ====="
           find Sources Resources -maxdepth 2 -type f | sort
-name: BurpengaryLoyalty
+name: Burpengary Market Loyalty App
 
 options:
   bundleIdPrefix: com.burpengaryfruitmarket.loyalty
