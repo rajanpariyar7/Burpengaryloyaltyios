@@ -8,7 +8,7 @@ workflows:
     environment:
       ios_signing:
         distribution_type: app_store
-        bundle_identifier: com.burpengary.loyalty # TODO: must match project.yml
+        bundle_identifier: com.burpengaryfruitmarket.loyalty # TODO: must match project.yml
       vars:
         XCODE_PROJECT: "BurpengaryLoyalty.xcodeproj"
         XCODE_SCHEME: "BurpengaryLoyalty"
