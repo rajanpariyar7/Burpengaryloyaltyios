@@ -8,18 +8,29 @@ import UIKit
 
 class LoyaltyViewModel: ObservableObject {
     @Published var currentUser: User?
+    @Published var currentUserPoints: Int = 0
     @Published var errorMessage: String?
     @Published var successMessage: String?
+    @Published var auditLogs: [AuditLog] = []
+
     private var db = Firestore.firestore()
     private var cancellables = Set<AnyCancellable>()
+    private var userPointsListener: ListenerRegistration?
+    private var auditLogsListener: ListenerRegistration?
 
     init() {
         Auth.auth().addStateDidChangeListener { [weak self] auth, user in
             guard let self = self else { return }
             if let user = user, let email = user.email {
                 self.fetchUserData(email: email)
+                self.listenToUserPoints(email: email)
             } else {
                 self.currentUser = nil
+                self.userPointsListener?.remove()
+                self.userPointsListener = nil
+                self.auditLogsListener?.remove()
+                self.auditLogsListener = nil
+                self.auditLogs = []
             }
         }
     }
@@ -157,18 +168,107 @@ class LoyaltyViewModel: ObservableObject {
             }
         }
     }
-func listenToUserPoints(email: String) {
-    Firestore.firestore().collection("users").document(email)
-        .addSnapshotListener { [weak self] snapshot, _ in
-            guard let data = snapshot?.data() else { return }
-            self?.currentUserPoints = data["points"] as? Int ?? 0
-         }
+
+    /// Real-time balance for display. Note: `fetchUserData` below already
+    /// decodes the full `User` (including `points`) via its own snapshot
+    /// listener, so `currentUser?.points` is already live. This is kept as
+    /// a lighter-weight alternative in case a view only wants the number.
+    func listenToUserPoints(email: String) {
+        userPointsListener?.remove()
+        userPointsListener = db.collection("users").document(email)
+            .addSnapshotListener { [weak self] snapshot, _ in
+                guard let data = snapshot?.data() else { return }
+                self?.currentUserPoints = data["points"] as? Int ?? 0
+            }
     }
+
+    /// Live feed of the audit trail for SuperAdminView. Firestore security
+    /// rules — not this client-side call — should be what actually restricts
+    /// who can read this collection; call this once you know the signed-in
+    /// user is staff, to avoid an unused listener for customer accounts.
+    func listenToAuditLogs() {
+        auditLogsListener?.remove()
+        auditLogsListener = db.collection("auditLogs")
+            .order(by: "timestamp", descending: true)
+            .addSnapshotListener { [weak self] snapshot, error in
+                if let error = error {
+                    print("Error fetching audit logs: \(error)")
+                    return
+                }
+                guard let docs = snapshot?.documents else { return }
+                self?.auditLogs = docs.compactMap { try? $0.data(as: AuditLog.self) }
+            }
+    }
+
+    private func logAudit(action: String, changedBy: String) {
+        let entry: [String: Any] = [
+            "action": action,
+            "changedBy": changedBy,
+            "timestamp": Int64(Date().timeIntervalSince1970 * 1000)
+        ]
+        db.collection("auditLogs").addDocument(data: entry)
+    }
+
+    /// Atomic, race-safe redemption. Reads and writes the balance inside a
+    /// single Firestore transaction, so two devices (or a device + a
+    /// register) redeeming the same account at the same moment can't both
+    /// succeed against a balance that only supports one of them. Firestore
+    /// automatically retries the transaction if it detects a conflicting
+    /// write, so this stays correct even under real concurrent access.
+    func redeemPoints(email: String, amount: Int, changedBy: String, completion: @escaping (Bool, String?) -> Void) {
+        let userRef = db.collection("users").document(email)
+
+        db.runTransaction({ (transaction, errorPointer) -> Any? in
+            let snapshot: DocumentSnapshot
+            do {
+                snapshot = try transaction.getDocument(userRef)
+            } catch {
+                errorPointer?.pointee = error as NSError
+                return nil
+            }
+
+            let currentPoints = snapshot.data()?["points"] as? Int ?? 0
+            guard currentPoints >= amount else {
+                errorPointer?.pointee = NSError(
+                    domain: "Redemption", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "Insufficient points"]
+                )
+                return nil
+            }
+
+            transaction.updateData(["points": currentPoints - amount], forDocument: userRef)
+            return nil
+        }) { [weak self] _, error in
+            if error == nil {
+                self?.logAudit(action: "Redeemed \(amount) points for \(email)", changedBy: changedBy)
+            }
+            completion(error == nil, error?.localizedDescription)
+        }
+    }
+
+    /// Atomic add. FieldValue.increment is applied server-side by Firestore,
+    /// so this is safe under concurrent writes (two cashiers, two devices)
+    /// without needing a full transaction.
+    func addPoints(email: String, amount: Int, changedBy: String, completion: ((Bool, String?) -> Void)? = nil) {
+        let userRef = db.collection("users").document(email)
+        userRef.updateData(["points": FieldValue.increment(Int64(amount))]) { [weak self] error in
+            if error == nil {
+                self?.logAudit(action: "Added \(amount) points to \(email)", changedBy: changedBy)
+            }
+            completion?(error == nil, error?.localizedDescription)
+        }
+    }
+
     func logout() {
         do {
             try Auth.auth().signOut()
             GIDSignIn.sharedInstance.signOut()
             self.currentUser = nil
+            self.userPointsListener?.remove()
+            self.userPointsListener = nil
+            self.auditLogsListener?.remove()
+            self.auditLogsListener = nil
+            self.auditLogs = []
         } catch {
             self.errorMessage = "Failed to logout"
         }
