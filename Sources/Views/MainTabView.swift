@@ -14,14 +14,23 @@ struct MainTabView: View {
             OffersView(viewModel: viewModel)
                 .tabItem { Label("Offers", systemImage: "tag.fill") }
 
-            if let role = viewModel.currentUser?.role, role != .customer {
-                StaffToolsView(viewModel: viewModel)
-                    .tabItem { Label("Staff", systemImage: "wrench.and.screwdriver.fill") }
+            switch viewModel.currentUser?.role {
+            case .cashier:
+                CashierView(viewModel: viewModel)
+                    .tabItem { Label("Cashier", systemImage: "qrcode.viewfinder") }
+            case .admin:
+                AdminView(viewModel: viewModel)
+                    .tabItem { Label("Admin", systemImage: "wrench.and.screwdriver.fill") }
+            case .superAdmin:
+                SuperAdminView(viewModel: viewModel)
+                    .tabItem { Label("Super Admin", systemImage: "crown.fill") }
+            default:
+                EmptyView()
             }
 
             ProfileView(viewModel: viewModel)
                 .tabItem { Label("Profile", systemImage: "person.fill") }
         }
-        .accentColor(.green)
+        .accentColor(Color(red: 0.30, green: 0.58, blue: 0.24))
     }
 }
