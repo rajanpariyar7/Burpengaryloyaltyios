@@ -1,14 +1,14 @@
 import Foundation
 
-enum Role: String, Codable {
+enum Role: String, Codable, CaseIterable {
     case superAdmin = "SUPER_ADMIN"
     case admin = "ADMIN"
     case cashier = "CASHIER"
     case customer = "CUSTOMER"
 }
 
-struct User: Codable, Identifiable {
-    var id: String { email } // Using email as the unique identifier
+struct User: Codable, Identifiable, Equatable {
+    var id: String { email } // email is the Firestore document id, same as Android
     var email: String = ""
     var passwordHash: String = ""
     var name: String = ""
@@ -39,6 +39,11 @@ struct Offer: Codable, Identifiable {
     var imageUrl: String? = nil
 }
 
+struct Category: Codable, Identifiable, Equatable {
+    var id: String = ""
+    var name: String = ""
+}
+
 struct PointSettings: Codable, Identifiable {
     var id: Int = 1
     var pointsPerDollar: Int = 10
@@ -48,4 +53,23 @@ struct PointSettings: Codable, Identifiable {
     var cashierLoginEnabled: Bool = true
     var cashierLoginStartTime: String = "08:00"
     var cashierLoginEndTime: String = "18:00"
+}
+
+// Android stores timestamp as a Long (millis since epoch) - mirrored here as Int64
+// so JSON encoding lines up exactly with what the Android app reads/writes.
+struct PointTransaction: Codable, Identifiable {
+    var id: String = ""
+    var userEmail: String = ""
+    var description: String = ""
+    var pointChange: Int = 0
+    var timestamp: Int64 = Int64(Date().timeIntervalSince1970 * 1000)
+
+    var date: Date { Date(timeIntervalSince1970: Double(timestamp) / 1000) }
+}
+
+struct AuditLog: Codable, Identifiable {
+    var id: String = ""
+    var action: String = ""
+    var changedBy: String = ""
+    var timestamp: Int64 = Int64(Date().timeIntervalSince1970 * 1000)
 }
