@@ -157,7 +157,13 @@ class LoyaltyViewModel: ObservableObject {
             }
         }
     }
-
+func listenToUserPoints(email: String) {
+    Firestore.firestore().collection("users").document(email)
+        .addSnapshotListener { [weak self] snapshot, _ in
+            guard let data = snapshot?.data() else { return }
+            self?.currentUserPoints = data["points"] as? Int ?? 0
+         }
+    }
     func logout() {
         do {
             try Auth.auth().signOut()
