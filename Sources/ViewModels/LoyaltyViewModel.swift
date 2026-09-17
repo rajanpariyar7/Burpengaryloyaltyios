@@ -10,7 +10,18 @@ class LoyaltyViewModel: ObservableObject {
     @Published var currentUser: User?
     @Published var errorMessage: String?
     @Published var successMessage: String?
+    @Published var auditLogs: [AuditLog] = []
+private var auditLogsListener: ListenerRegistration?
 
+func listenToAuditLogs() {
+    auditLogsListener = Firestore.firestore()
+        .collection("auditLogs")
+        .order(by: "timestamp", descending: true)
+        .addSnapshotListener { [weak self] snapshot, error in
+            guard let docs = snapshot?.documents else { return }
+            self?.auditLogs = docs.compactMap { try? $0.data(as: AuditLog.self) }
+        }
+}
     private var db = Firestore.firestore()
     private var cancellables = Set<AnyCancellable>()
 
