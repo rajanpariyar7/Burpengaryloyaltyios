@@ -1,4 +1,5 @@
 import Foundation
+import FirebaseFirestore
 
 enum Role: String, Codable, CaseIterable {
     case superAdmin = "SUPER_ADMIN"
@@ -57,8 +58,12 @@ struct PointSettings: Codable, Identifiable {
 
 // Android stores timestamp as a Long (millis since epoch) - mirrored here as Int64
 // so JSON encoding lines up exactly with what the Android app reads/writes.
+//
+// `id` is @DocumentID (not a plain default) so each transaction decoded from
+// Firestore gets its actual document id. Without this, every transaction
+// would decode with the same "" id and break SwiftUI List's identity.
 struct PointTransaction: Codable, Identifiable {
-    var id: String = ""
+    @DocumentID var id: String?
     var userEmail: String = ""
     var description: String = ""
     var pointChange: Int = 0
@@ -67,8 +72,10 @@ struct PointTransaction: Codable, Identifiable {
     var date: Date { Date(timeIntervalSince1970: Double(timestamp) / 1000) }
 }
 
+// Same @DocumentID fix as PointTransaction, for the same reason - the
+// SuperAdminView audit log list needs a real, unique id per row.
 struct AuditLog: Codable, Identifiable {
-    var id: String = ""
+    @DocumentID var id: String?
     var action: String = ""
     var changedBy: String = ""
     var timestamp: Int64 = Int64(Date().timeIntervalSince1970 * 1000)
