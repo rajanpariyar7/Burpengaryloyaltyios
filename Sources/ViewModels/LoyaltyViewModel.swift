@@ -12,11 +12,26 @@ class LoyaltyViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var successMessage: String?
     @Published var auditLogs: [AuditLog] = []
+    @Published var allUsers: [User] = []
+    @Published var allTransactions: [PointTransaction] = []
+    @Published var offers: [Offer] = []
+    @Published var categories: [Category] = []
+    @Published var pointSettings: PointSettings?
+
+    /// Customers only, derived from `allUsers`. Kept as a computed property
+    /// rather than a second listener so it can never drift out of sync with
+    /// `allUsers`/`searchUsers`.
+    var allCustomers: [User] { allUsers.filter { $0.role == .customer } }
 
     private var db = Firestore.firestore()
     private var cancellables = Set<AnyCancellable>()
     private var userPointsListener: ListenerRegistration?
     private var auditLogsListener: ListenerRegistration?
+    private var allUsersListener: ListenerRegistration?
+    private var allTransactionsListener: ListenerRegistration?
+    private var offersListener: ListenerRegistration?
+    private var categoriesListener: ListenerRegistration?
+    private var pointSettingsListener: ListenerRegistration?
 
     init() {
         Auth.auth().addStateDidChangeListener { [weak self] auth, user in
@@ -31,6 +46,21 @@ class LoyaltyViewModel: ObservableObject {
                 self.auditLogsListener?.remove()
                 self.auditLogsListener = nil
                 self.auditLogs = []
+                self.allUsersListener?.remove()
+                self.allUsersListener = nil
+                self.allUsers = []
+                self.allTransactionsListener?.remove()
+                self.allTransactionsListener = nil
+                self.allTransactions = []
+                self.offersListener?.remove()
+                self.offersListener = nil
+                self.offers = []
+                self.categoriesListener?.remove()
+                self.categoriesListener = nil
+                self.categories = []
+                self.pointSettingsListener?.remove()
+                self.pointSettingsListener = nil
+                self.pointSettings = nil
             }
         }
     }
@@ -200,6 +230,205 @@ class LoyaltyViewModel: ObservableObject {
             }
     }
 
+    /// Live user directory, backing SuperAdminRolesTab, AdminCustomersTab
+    /// (via `allCustomers`) and `searchUsers`. Same manual-call convention
+    /// as `listenToAuditLogs` above - call once the signed-in user is
+    /// staff.
+    func listenToAllUsers() {
+        allUsersListener?.remove()
+        allUsersListener = db.collection("users").addSnapshotListener { [weak self] snapshot, error in
+            if let error = error {
+                print("Error fetching users: \(error)")
+                return
+            }
+            guard let docs = snapshot?.documents else { return }
+            self?.allUsers = docs.compactMap { try? $0.data(as: User.self) }
+        }
+    }
+
+    /// Live feed backing AdminStatsTab, AdminTransactionsTab and
+    /// SuperAdminTransactionsTab. Assumes a top-level "transactions"
+    /// collection separate from "auditLogs" - verify this matches the
+    /// collection name the Android app writes to, if points/transactions
+    /// stop showing up here after this change.
+    func listenToAllTransactions() {
+        allTransactionsListener?.remove()
+        allTransactionsListener = db.collection("transactions")
+            .order(by: "timestamp", descending: true)
+            .addSnapshotListener { [weak self] snapshot, error in
+                if let error = error {
+                    print("Error fetching transactions: \(error)")
+                    return
+                }
+                guard let docs = snapshot?.documents else { return }
+                self?.allTransactions = docs.compactMap { try? $0.data(as: PointTransaction.self) }
+            }
+    }
+
+    func listenToOffers() {
+        offersListener?.remove()
+        offersListener = db.collection("offers").addSnapshotListener { [weak self] snapshot, error in
+            if let error = error {
+                print("Error fetching offers: \(error)")
+                return
+            }
+            guard let docs = snapshot?.documents else { return }
+            self?.offers = docs.compactMap { try? $0.data(as: Offer.self) }
+        }
+    }
+
+    func listenToCategories() {
+        categoriesListener?.remove()
+        categoriesListener = db.collection("categories").addSnapshotListener { [weak self] snapshot, error in
+            if let error = error {
+                print("Error fetching categories: \(error)")
+                return
+            }
+            guard let docs = snapshot?.documents else { return }
+            self?.categories = docs.compactMap { try? $0.data(as: Category.self) }
+        }
+    }
+
+    /// Single global settings document. Stored at settings/global - adjust
+    /// the document path here (and in `updateSettings` below) if the
+    /// Android app uses a different path for this doc.
+    func listenToPointSettings() {
+        pointSettingsListener?.remove()
+        pointSettingsListener = db.collection("settings").document("global")
+            .addSnapshotListener { [weak self] snapshot, error in
+                if let error = error {
+                    print("Error fetching settings: \(error)")
+                    return
+                }
+                self?.pointSettings = try? snapshot?.data(as: PointSettings.self)
+            }
+    }
+
+    /// Writes the global points/cashier-schedule config. Both AdminSettingsTab
+    /// and SuperAdminConfigTab call this with the same signature.
+    func updateSettings(
+        pointsPerDollar: Int,
+        discountPer100Points: Double,
+        redemptionThreshold: Int,
+        adminWriteEnabled: Bool,
+        cashierLoginEnabled: Bool,
+        cashierLoginStartTime: String,
+        cashierLoginEndTime: String
+    ) {
+        errorMessage = nil
+        successMessage = nil
+        let settings = PointSettings(
+            pointsPerDollar: pointsPerDollar,
+            discountPer100Points: discountPer100Points,
+            redemptionThreshold: redemptionThreshold,
+            adminWriteEnabled: adminWriteEnabled,
+            cashierLoginEnabled: cashierLoginEnabled,
+            cashierLoginStartTime: cashierLoginStartTime,
+            cashierLoginEndTime: cashierLoginEndTime
+        )
+        do {
+            try db.collection("settings").document("global").setData(from: settings, merge: true)
+            successMessage = "Settings saved"
+            logAudit(action: "Updated global settings", changedBy: currentUser?.email ?? "admin")
+        } catch {
+            errorMessage = "Failed to save settings."
+        }
+    }
+
+    /// Super Admin: change any user's role. Firestore security rules should
+    /// be the real enforcement here; this call assumes they already
+    /// restrict this write to super admins.
+    func changeUserRole(email: String, newRole: Role) {
+        errorMessage = nil
+        db.collection("users").document(email).updateData(["role": newRole.rawValue]) { [weak self] error in
+            if let error = error {
+                self?.errorMessage = error.localizedDescription
+            } else {
+                self?.logAudit(
+                    action: "Changed role of \(email) to \(newRole.rawValue)",
+                    changedBy: self?.currentUser?.email ?? "superadmin"
+                )
+            }
+        }
+    }
+
+    /// Super Admin: create a cashier account. `Auth.auth().createUser`
+    /// signs the SDK in as the *new* user, which would otherwise kick the
+    /// signed-in Super Admin out of their own session mid-flow. Creating
+    /// the account on a throwaway secondary FirebaseApp instance avoids
+    /// touching the primary Auth session; the secondary app is torn down
+    /// once the Firestore doc is written.
+    func createCashier(email: String, name: String, pass: String) {
+        errorMessage = nil
+        successMessage = nil
+        guard !email.isEmpty, !name.isEmpty, !pass.isEmpty else {
+            self.errorMessage = "Name, email and password required"
+            return
+        }
+        guard let options = FirebaseApp.app()?.options else {
+            self.errorMessage = "Firebase is not configured."
+            return
+        }
+
+        let secondaryAppName = "CashierCreation-\(UUID().uuidString)"
+        if FirebaseApp.app(name: secondaryAppName) == nil {
+            FirebaseApp.configure(name: secondaryAppName, options: options)
+        }
+        guard let secondaryApp = FirebaseApp.app(name: secondaryAppName) else {
+            self.errorMessage = "Could not create cashier account."
+            return
+        }
+        let secondaryAuth = Auth.auth(app: secondaryApp)
+
+        secondaryAuth.createUser(withEmail: email, password: pass) { [weak self] result, error in
+            guard let self = self else { return }
+            if let error = error {
+                self.errorMessage = error.localizedDescription
+                FirebaseApp.app(name: secondaryAppName)?.delete { _ in }
+                return
+            }
+
+            let newUser = User(email: email, passwordHash: pass, name: name, role: .cashier, points: 0)
+            do {
+                try self.db.collection("users").document(email).setData(from: newUser)
+                self.successMessage = "Cashier account created"
+                self.logAudit(action: "Created cashier account \(email)", changedBy: self.currentUser?.email ?? "superadmin")
+            } catch {
+                self.errorMessage = "Failed to save cashier data."
+            }
+
+            try? secondaryAuth.signOut()
+            FirebaseApp.app(name: secondaryAppName)?.delete { _ in }
+        }
+    }
+
+    func addCategory(_ name: String) {
+        errorMessage = nil
+        let category = Category(id: UUID().uuidString, name: name)
+        do {
+            try db.collection("categories").document(category.id).setData(from: category)
+        } catch {
+            self.errorMessage = "Failed to add category."
+        }
+    }
+
+    func deleteOffer(_ offer: Offer) {
+        errorMessage = nil
+        db.collection("offers").document(offer.id).delete { [weak self] error in
+            if let error = error {
+                self?.errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    /// Writes a row to the "transactions" collection that `allTransactions`
+    /// listens to, so admin/super-admin reporting reflects real point
+    /// activity from `addPoints`/`redeemPoints` below.
+    private func recordTransaction(userEmail: String, description: String, pointChange: Int) {
+        let tx = PointTransaction(userEmail: userEmail, description: description, pointChange: pointChange)
+        try? db.collection("transactions").addDocument(from: tx)
+    }
+
     private func logAudit(action: String, changedBy: String) {
         let entry: [String: Any] = [
             "action": action,
@@ -241,6 +470,7 @@ class LoyaltyViewModel: ObservableObject {
         }) { [weak self] _, error in
             if error == nil {
                 self?.logAudit(action: "Redeemed \(amount) points for \(email)", changedBy: changedBy)
+                self?.recordTransaction(userEmail: email, description: "Redeemed \(amount) points", pointChange: -amount)
             }
             completion(error == nil, error?.localizedDescription)
         }
@@ -254,17 +484,14 @@ class LoyaltyViewModel: ObservableObject {
         userRef.updateData(["points": FieldValue.increment(Int64(amount))]) { [weak self] error in
             if error == nil {
                 self?.logAudit(action: "Added \(amount) points to \(email)", changedBy: changedBy)
+                self?.recordTransaction(userEmail: email, description: "Added \(amount) points", pointChange: amount)
             }
             completion?(error == nil, error?.localizedDescription)
         }
     }
 
     /// Synchronous local search over the already-loaded customer list, for
-    /// CashierView's "find a customer" flow. Assumes `allCustomers`
-    /// ([User], populated by whatever listener already backs
-    /// AdminCustomersTab) exists elsewhere in this class - it isn't in this
-    /// file as uploaded, so add this method next to wherever that property
-    /// is actually declared, not here, if this snippet was trimmed.
+    /// CashierView's "find a customer" flow.
     func searchUsers(_ query: String) -> [User] {
         guard !query.isEmpty else { return allCustomers }
         return allCustomers.filter {
@@ -309,6 +536,21 @@ class LoyaltyViewModel: ObservableObject {
             self.auditLogsListener?.remove()
             self.auditLogsListener = nil
             self.auditLogs = []
+            self.allUsersListener?.remove()
+            self.allUsersListener = nil
+            self.allUsers = []
+            self.allTransactionsListener?.remove()
+            self.allTransactionsListener = nil
+            self.allTransactions = []
+            self.offersListener?.remove()
+            self.offersListener = nil
+            self.offers = []
+            self.categoriesListener?.remove()
+            self.categoriesListener = nil
+            self.categories = []
+            self.pointSettingsListener?.remove()
+            self.pointSettingsListener = nil
+            self.pointSettings = nil
         } catch {
             self.errorMessage = "Failed to logout"
         }
