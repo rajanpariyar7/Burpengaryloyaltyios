@@ -426,7 +426,11 @@ class LoyaltyViewModel: ObservableObject {
     /// activity from `addPoints`/`redeemPoints` below.
     private func recordTransaction(userEmail: String, description: String, pointChange: Int) {
         let tx = PointTransaction(userEmail: userEmail, description: description, pointChange: pointChange)
-        try? db.collection("transactions").addDocument(from: tx)
+        do {
+            _ = try db.collection("transactions").addDocument(from: tx)
+        } catch {
+            print("Error recording transaction: \(error)")
+        }
     }
 
     private func logAudit(action: String, changedBy: String) {
@@ -487,6 +491,27 @@ class LoyaltyViewModel: ObservableObject {
                 self?.recordTransaction(userEmail: email, description: "Added \(amount) points", pointChange: amount)
             }
             completion?(error == nil, error?.localizedDescription)
+        }
+    }
+
+    /// Cashier flow: redeem points for a customer, filling in `changedBy`
+    /// from the signed-in staff account. Thin wrapper around `redeemPoints`
+    /// for views (CashierView) that don't want to handle the completion
+    /// themselves.
+    func redeemPointsCashier(email: String, points: Int) {
+        errorMessage = nil
+        successMessage = nil
+        guard points > 0 else {
+            errorMessage = "Enter a valid point amount"
+            return
+        }
+        let staffEmail = currentUser?.email ?? "cashier"
+        redeemPoints(email: email, amount: points, changedBy: staffEmail) { [weak self] success, error in
+            if success {
+                self?.successMessage = "Redeemed \(points) points for \(email)"
+            } else {
+                self?.errorMessage = error
+            }
         }
     }
 
