@@ -30,7 +30,7 @@ targets:
       properties:
         CFBundleDisplayName: Burpengary Fruit Market
         UILaunchScreen: {}
-        NSCameraUsageDescription
+        NSCameraUsageDescription: "This app uses the camera to scan loyalty QR codes."
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
 
