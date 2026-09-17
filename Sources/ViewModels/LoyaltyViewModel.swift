@@ -402,6 +402,41 @@ class LoyaltyViewModel: ObservableObject {
         }
     }
 
+    /// AdminManageForm's "Publish Product" flow. `category` may be "" (the
+    /// Picker's "General" option is tagged "") - falls back to Offer's own
+    /// "General" default in that case.
+    func addOffer(title: String, price: String, description: String, category: String) {
+        errorMessage = nil
+        successMessage = nil
+        guard !title.isEmpty else {
+            errorMessage = "Title required"
+            return
+        }
+        let offer = Offer(
+            id: UUID().uuidString,
+            title: title,
+            price: price,
+            category: category.isEmpty ? "General" : category,
+            description: description
+        )
+        do {
+            try db.collection("offers").document(offer.id).setData(from: offer)
+            successMessage = "Offer added"
+            logAudit(action: "Added offer \(title)", changedBy: currentUser?.email ?? "admin")
+        } catch {
+            errorMessage = "Failed to add offer."
+        }
+    }
+
+    func deleteCategory(_ category: Category) {
+        errorMessage = nil
+        db.collection("categories").document(category.id).delete { [weak self] error in
+            if let error = error {
+                self?.errorMessage = error.localizedDescription
+            }
+        }
+    }
+
     func addCategory(_ name: String) {
         errorMessage = nil
         let category = Category(id: UUID().uuidString, name: name)
