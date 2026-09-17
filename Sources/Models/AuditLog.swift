@@ -1,3 +1,11 @@
+import Foundation
+
+struct AuditLog: Codable, Identifiable {
+    var id: String = ""
+    var action: String = ""
+    var changedBy: String = ""
+    var timestamp: Int64 = Int64(Date().timeIntervalSince1970 * 1000)
+}
 func redeemPoints(email: String, amount: Int, completion: @escaping (Bool, String?) -> Void) {
     let userRef = Firestore.firestore().collection("users").document(email)
 
