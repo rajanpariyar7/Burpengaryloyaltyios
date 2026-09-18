@@ -18,9 +18,16 @@ struct BurpengaryApp: App {
     var body: some Scene {
         WindowGroup {
             Group {
-                if viewModel.currentUser != nil {
-                    // Customer / Cashier Dashboard
-                    Text("Dashboard")
+                if let user = viewModel.currentUser {
+                    switch user.role {
+                    case .customer:
+                        CustomerDashboardScreen(viewModel: viewModel)
+                    default:
+                        // TODO: Cashier / Admin / Super Admin dashboards
+                        // (Kotlin: CashierScreen.kt, AdminDashboardScreen.kt,
+                        // SuperAdminDashboardScreen.kt) aren't translated yet.
+                        Text("Dashboard")
+                    }
                 } else {
                     LoginView(viewModel: viewModel)
                 }
