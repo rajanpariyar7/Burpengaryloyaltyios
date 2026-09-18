@@ -1,15 +1,14 @@
 import Foundation
-import FirebaseFirestore
 
-enum Role: String, Codable, CaseIterable {
+enum Role: String, Codable {
     case superAdmin = "SUPER_ADMIN"
     case admin = "ADMIN"
     case cashier = "CASHIER"
     case customer = "CUSTOMER"
 }
 
-struct User: Codable, Identifiable, Equatable {
-    var id: String { email } // email is the Firestore document id, same as Android
+struct User: Codable, Identifiable {
+    var id: String { email } // Using email as the unique identifier
     var email: String = ""
     var passwordHash: String = ""
     var name: String = ""
@@ -40,11 +39,6 @@ struct Offer: Codable, Identifiable {
     var imageUrl: String? = nil
 }
 
-struct Category: Codable, Identifiable, Equatable {
-    var id: String = ""
-    var name: String = ""
-}
-
 struct PointSettings: Codable, Identifiable {
     var id: Int = 1
     var pointsPerDollar: Int = 10
@@ -54,29 +48,4 @@ struct PointSettings: Codable, Identifiable {
     var cashierLoginEnabled: Bool = true
     var cashierLoginStartTime: String = "08:00"
     var cashierLoginEndTime: String = "18:00"
-}
-
-// Android stores timestamp as a Long (millis since epoch) - mirrored here as Int64
-// so JSON encoding lines up exactly with what the Android app reads/writes.
-//
-// `id` is @DocumentID (not a plain default) so each transaction decoded from
-// Firestore gets its actual document id. Without this, every transaction
-// would decode with the same "" id and break SwiftUI List's identity.
-struct PointTransaction: Codable, Identifiable {
-    @DocumentID var id: String?
-    var userEmail: String = ""
-    var description: String = ""
-    var pointChange: Int = 0
-    var timestamp: Int64 = Int64(Date().timeIntervalSince1970 * 1000)
-
-    var date: Date { Date(timeIntervalSince1970: Double(timestamp) / 1000) }
-}
-
-// Same @DocumentID fix as PointTransaction, for the same reason - the
-// SuperAdminView audit log list needs a real, unique id per row.
-struct AuditLog: Codable, Identifiable {
-    @DocumentID var id: String?
-    var action: String = ""
-    var changedBy: String = ""
-    var timestamp: Int64 = Int64(Date().timeIntervalSince1970 * 1000)
 }
