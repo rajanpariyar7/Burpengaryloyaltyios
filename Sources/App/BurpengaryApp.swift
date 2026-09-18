@@ -8,31 +8,23 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     FirebaseApp.configure()
     return true
   }
-
-  func application(_ app: UIApplication,
-                    open url: URL,
-                    options: [UIApplication.OpenURLOptionsKey : Any] = [:]) -> Bool {
-    GIDSignIn.sharedInstance.handle(url)
-  }
 }
 
 @main
 struct BurpengaryApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var viewModel = LoyaltyViewModel()
-
+    
     var body: some Scene {
         WindowGroup {
             Group {
                 if viewModel.currentUser != nil {
-                    MainTabView(viewModel: viewModel)
+                    // Customer / Cashier Dashboard
+                    Text("Dashboard")
                 } else {
                     LoginView(viewModel: viewModel)
                 }
             }
-            // App-wide: match the Android app's light theme regardless of
-            // the device's system Dark Mode setting.
-            .preferredColorScheme(.light)
             .onOpenURL { url in
                 GIDSignIn.sharedInstance.handle(url)
             }
