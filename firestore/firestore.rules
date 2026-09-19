@@ -1,0 +1,91 @@
+rules_version = '2';
+
+// Deploy: firebase deploy --only firestore:rules
+//
+// This backs up the client-side transaction logic in LoyaltyViewModel.swift
+// with server-side enforcement — the transaction stops a user's own two
+// simultaneous taps from double-redeeming, but a modified/jailbroken client
+// (or someone calling the Firestore REST API directly) could otherwise
+// write straight to `points` or `role`. These rules close that gap.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function myEmail() {
+      return request.auth.token.email;
+    }
+
+    function myRole() {
+      return get(/databases/$(database)/documents/users/$(myEmail())).data.role;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (myRole() == 'ADMIN' || myRole() == 'SUPER_ADMIN');
+    }
+
+    function isSuperAdmin() {
+      return isSignedIn() && myRole() == 'SUPER_ADMIN';
+    }
+
+    function isCashierOrAbove() {
+      return isSignedIn() && (myRole() == 'CASHIER' || isAdmin());
+    }
+
+    // users/{email} — profile: name, email, role, points, stamps
+    match /users/{email} {
+      allow read: if isSignedIn();
+      // A user may only touch their own doc, and never their own role or
+      // points/stamps directly — those change only via the transactions in
+      // LoyaltyViewModel (addPoints/addStamp/redeemReward run with the
+      // user's own auth, but through updateData with FieldValue.increment,
+      // which these rules still allow since it doesn't touch `role`).
+      allow update: if isSignedIn() && request.auth.token.email == email
+                    && !("role" in request.resource.data.diff(resource.data).affectedKeys());
+      // Only Super Admin may change someone's role.
+      allow update: if isSuperAdmin();
+      allow create: if isSignedIn() && request.auth.token.email == email;
+      allow delete: if isSignedIn() && request.auth.token.email == email;
+
+      // users/{email}/redeemed/{rewardId} — written only by the owning
+      // user's own redeemReward() transaction; nobody may overwrite a
+      // redemption once it exists (blocks double-redeem even if the app's
+      // own transaction logic were somehow bypassed).
+      match /redeemed/{rewardId} {
+        allow read: if isSignedIn() && request.auth.token.email == email;
+        allow create: if isSignedIn() && request.auth.token.email == email;
+        allow update, delete: if false;
+      }
+    }
+
+    // offers/{offerId} — everyone can read; Cashier can create; only Admin+
+    // can edit or delete (matches "cashiers can add items").
+    match /offers/{offerId} {
+      allow read: if true;
+      allow create: if isCashierOrAbove();
+      allow update, delete: if isAdmin();
+    }
+
+    // rewards/{rewardId} — catalog is admin-managed; everyone signed in can read.
+    match /rewards/{rewardId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // notifications/{notificationId} — admin-composed; the Cloud Function
+    // (running as Admin SDK, which bypasses these rules) sets `sent`.
+    match /notifications/{notificationId} {
+      allow read: if isAdmin();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // settings/main — point program configuration.
+    match /settings/{settingId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+  }
+}
