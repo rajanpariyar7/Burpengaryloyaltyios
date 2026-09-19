@@ -1,52 +1,46 @@
-# Burpengary Loyalty — new features
+# Upload instructions
 
-Implements: rewards catalog with atomic/double-redeem-proof redemption,
-offers & specials with image upload, admin notification composer, and
-super-admin role management.
+This zip mirrors your repo's real layout (`Sources/App`, `Sources/Models`,
+`Sources/ViewModels`, `Sources/Views`) instead of a flat `Sources/` folder.
 
-## Where things go
+## 1. Delete the stray root-level copies first
+Your last screenshots showed these sitting at the repo ROOT (outside
+`Sources/`), which is why XcodeGen never picked them up:
+`AdminHomeView.swift`, `AdminNotificationsView.swift`,
+`AdminOffersView.swift`, `AdminRolesView.swift`, `BurpengaryApp.swift`,
+`CustomerDashboardScreen.swift`, `GetInTouchView.swift`, `LoginView.swift`,
+`LoyaltyViewModel.swift`, `Models.swift`, `ProfileView.swift`,
+`RewardsView.swift`. Delete all of those from the repo root — `firestore/`,
+`functions/`, and `project.yml` at the root are correctly placed and don't
+need touching.
 
-Drop everything under `Sources/` into your existing `Sources/` folder
-(overwriting `Models.swift`, `LoyaltyViewModel.swift`, and
-`BurpengaryApp.swift` — the others are new files). `LoginView.swift`,
-`ProfileView.swift`, and `GetInTouchView.swift` are included unchanged, just
-so the zip is drop-in complete.
+## 2. Upload this zip's contents into the matching folders
+- `Sources/App/BurpengaryApp.swift` → your `Sources/App/`
+- `Sources/Models/Models.swift` → your `Sources/Models/`
+- `Sources/ViewModels/LoyaltyViewModel.swift` → your `Sources/ViewModels/`
+- `Sources/Views/*.swift` (9 files) → your `Sources/Views/`
+- `project.yml` → repo root (replace yours — this is the one with the
+  `name: BurpengaryLoyalty` fix)
+- `firestore/firestore.rules`, `functions/index.js` → repo root, same spots
+  they're already in
 
-- `project.yml` — replace yours; only change is adding the `FirebaseStorage`
-  product (needed for offer/notification image uploads).
-- `functions/index.js` — deploy separately with the Firebase CLI
-  (`firebase deploy --only functions`); this is what actually sends the push
-  when an admin saves a notification. Writing the Firestore doc alone does
-  **not** push anything to a phone — see the comment at the top of that file
-  for why.
-- `firestore/firestore.rules` — deploy with `firebase deploy --only
-  firestore:rules`. Backs up the client-side transaction logic (so points
-  can't go negative / a reward can't be redeemed twice) with server-side
-  enforcement, and restricts role changes to Super Admin.
+I did NOT touch `codemagic.yaml` — you've edited it since I last saw it
+("Refactor codemagic.yaml for script indentation"), so I'd rather not
+overwrite it blindly.
 
-## Fixed while I was in here
+## 3. Still unresolved: I don't have your existing Views yet
+`Sources/Views/` already has `MainTabView.swift`, `HomeView.swift`,
+`AdminView.swift`, `SuperAdminView.swift`, `CashierView.swift`,
+`StaffToolsView.swift`, `BarcodeScannerView.swift`, `OffersView.swift`,
+`SignUpView.swift` — none of which I've ever seen. This zip's
+`AdminHomeView.swift` / `AdminOffersView.swift` / `AdminNotificationsView.swift`
+/ `AdminRolesView.swift` and the role-routing in `BurpengaryApp.swift` were
+written without knowing what's in those files, so there is a real chance of
+duplication or naming collisions (e.g. if `MainTabView.swift` already does
+what my `BurpengaryApp.swift` role-switch does, or `AdminView.swift`
+already has an offers screen).
 
-`ProfileView.swift` called `viewModel.signOut()` and
-`viewModel.deleteAccount` referenced `self?.isAuthenticated` — neither
-existed in the `LoyaltyViewModel.swift` you had, so it wouldn't have
-compiled. Fixed: `signOut()` now exists (`logout()` still works too, as an
-alias), and `deleteAccount` no longer references the undeclared property.
-
-## Known gap: push notifications aren't fully wired end-to-end
-
-Writing a notification in `AdminNotificationsView` → Firestore →
-`functions/index.js` → FCM send is all there. What's *not* included is the
-iOS side of registering for push and capturing the device token
-(`Messaging.messaging().delegate`, requesting `UNUserNotificationCenter`
-authorization, and calling `viewModel.updateFCMToken(token)`). That needs a
-reference to the live `LoyaltyViewModel` from `AppDelegate`, which isn't
-free — see the comment block in `BurpengaryApp.swift`. Say the word and
-I'll wire that up too.
-
-## Assumption on "admin must be able to give roles" vs "super admin can give roles"
-
-Your message had both. I went with: **only Super Admin assigns
-Admin/Cashier roles** (matches the Android app's convention, and is what
-`AdminRolesView.swift` + the Firestore rules enforce). Everyone Admin+ can
-manage Offers/Notifications. Flag it if you wanted Admins to also be able to
-promote people to Admin/Cashier.
+**This zip will very likely still fail to build** until those are
+reconciled. Uploading the 9 files listed above (or the whole current
+`Sources/Views/` folder) so I can check for overlaps is the next step —
+happy to do that pass as soon as I can see them.

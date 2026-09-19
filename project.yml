@@ -1,3 +1,4 @@
+name: BurpengaryLoyalty
 options:
   bundleIdPrefix: com.burpengaryfruitmarket
   deploymentTarget:

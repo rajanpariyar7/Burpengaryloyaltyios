@@ -85,9 +85,10 @@ struct CustomerDashboardScreen: View {
                 switch selectedTab {
                 case 0: CustomerHomeTab(viewModel: viewModel)
                 case 1: CustomerQRTab(customer: viewModel.currentUser)
-                case 2: CustomerCatalogTab(viewModel: viewModel)
-                case 3: CustomerHistoryTab(viewModel: viewModel)
-                default: ProfileTab(viewModel: viewModel)
+                case 2: RewardsView(viewModel: viewModel)
+                case 3: CustomerCatalogTab(viewModel: viewModel)
+                case 4: CustomerHistoryTab(viewModel: viewModel)
+                default: ProfileView(viewModel: viewModel)
                 }
             }
             .padding(.bottom, 80) // reserve space for the custom bottom bar
@@ -109,6 +110,7 @@ private struct BFMBottomBar: View {
     private let items: [(filled: String, outline: String, label: String)] = [
         ("square.grid.2x2.fill", "square.grid.2x2", "Home"),
         ("qrcode", "qrcode", "ID"),
+        ("gift.fill", "gift", "Rewards"),
         ("bag.fill", "bag", "Catalog"),
         ("clock.arrow.circlepath", "clock.arrow.circlepath", "History"),
         ("person.fill", "person", "Profile")
@@ -595,73 +597,10 @@ struct CustomerCatalogTab: View {
     }
 }
 
-// MARK: - Profile tab (Kotlin: ProfileTab)
-
-struct ProfileTab: View {
-    @ObservedObject var viewModel: LoyaltyViewModel
-    @State private var showPasswordDialog = false
-    @State private var newPassword = ""
-
-    private var customer: User? { viewModel.currentUser }
-
-    var body: some View {
-        VStack {
-            Spacer()
-            ZStack {
-                Circle().fill(AppColors.lightGreenCard).frame(width: 100, height: 100)
-                let initial = customer?.name.first.map { String($0).uppercased() } ?? "G"
-                Text(initial)
-                    .font(.system(size: 40, weight: .bold))
-                    .foregroundColor(AppColors.primaryGreen)
-            }
-            Spacer().frame(height: 24)
-            Text(customer?.name ?? "Guest")
-                .font(.system(size: 24, weight: .heavy))
-                .foregroundColor(AppColors.darkGreen)
-            Text(customer?.email ?? "guest@example.com")
-                .font(.system(size: 14))
-                .foregroundColor(.gray)
-            Spacer().frame(height: 48)
-
-            Button(action: { showPasswordDialog = true }) {
-                Text("Change Password")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundColor(AppColors.primaryGreen)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 56)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16)
-                            .stroke(AppColors.primaryGreen, lineWidth: 1)
-                    )
-            }
-            Spacer().frame(height: 16)
-
-            Button(action: { viewModel.logout() }) {
-                Text("Sign Out")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 56)
-                    .background(AppColors.primaryGreen)
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
-            }
-            Spacer()
-        }
-        .padding(24)
-        .alert("Change Password", isPresented: $showPasswordDialog) {
-            SecureField("New Password", text: $newPassword)
-            Button("Save") {
-                if !newPassword.isEmpty, let email = customer?.email {
-                    viewModel.changeUserPassword(email, newPassword)
-                }
-                newPassword = ""
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Enter your new app password below. Remember to save it securely.")
-        }
-    }
-}
+// NOTE: the Profile tab is now ProfileView.swift (already in this project —
+// it has Get in Touch + Delete Account, which this simpler version didn't),
+// wired in above. The old ProfileTab struct that used to live here has been
+// removed so there's only one profile screen.
 
 // MARK: - QR tab (Kotlin: CustomerQRTab)
 

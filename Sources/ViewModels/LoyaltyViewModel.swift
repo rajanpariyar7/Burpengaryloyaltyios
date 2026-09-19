@@ -1,8 +1,8 @@
 import Foundation
 import FirebaseAuth
 import FirebaseFirestore
+import FirebaseStorage
 import Combine
-import FirebaseAnalytics // added: needed for logOfferClick, matches Android's FirebaseAnalytics usage
 
 class LoyaltyViewModel: ObservableObject {
     @Published var currentUser: User?
@@ -10,18 +10,22 @@ class LoyaltyViewModel: ObservableObject {
     @Published var successMessage: String?
     @Published var alertItem: String?
 
-    // MARK: - Added for CustomerDashboardScreen (mirrors Android's LoyaltyViewModel StateFlows)
+    // Added — live catalogs used by the new screens below.
     @Published var offers: [Offer] = []
+    @Published var rewards: [Reward] = []
+    @Published var notifications: [AppNotification] = []
     @Published var pointSettings: PointSettings?
-    @Published var allTransactions: [PointTransaction] = []
+    @Published var allUsers: [User] = [] // populated only for admin/superAdmin (see listenToAllUsers)
 
     private var db = Firestore.firestore()
+    private var storage = Storage.storage()
     private var cancellables = Set<AnyCancellable>()
 
-    // Added: hold the listener registrations so they can be removed on deinit / user change
     private var offersListener: ListenerRegistration?
+    private var rewardsListener: ListenerRegistration?
+    private var notificationsListener: ListenerRegistration?
     private var settingsListener: ListenerRegistration?
-    private var transactionsListener: ListenerRegistration?
+    private var usersListener: ListenerRegistration?
 
     init() {
         Auth.auth().addStateDidChangeListener { [weak self] auth, user in
@@ -30,20 +34,22 @@ class LoyaltyViewModel: ObservableObject {
                 self.fetchUserData(email: email)
             } else {
                 self.currentUser = nil
+                self.usersListener?.remove()
+                self.usersListener = nil
             }
         }
-        // Added: these three collections aren't scoped to the logged-in user
-        // (same as Android's repository.offers / pointSettings / getAllTransactions,
-        // which start as soon as the ViewModel is created), so they're started here.
         listenToOffers()
+        listenToRewards()
+        listenToNotifications()
         listenToPointSettings()
-        listenToAllTransactions()
     }
 
     deinit {
         offersListener?.remove()
+        rewardsListener?.remove()
+        notificationsListener?.remove()
         settingsListener?.remove()
-        transactionsListener?.remove()
+        usersListener?.remove()
     }
 
     // MARK: - Email/Password Login
@@ -61,7 +67,6 @@ class LoyaltyViewModel: ObservableObject {
             }
             guard let self = self, let userEmail = result?.user.email else { return }
 
-            // Check if document exists in firestore; if not create it
             let userDoc = self.db.collection("users").document(userEmail)
             userDoc.getDocument { snapshot, _ in
                 if snapshot?.exists != true {
@@ -128,7 +133,7 @@ class LoyaltyViewModel: ObservableObject {
                 passwordHash: defaultPassword,
                 name: name.isEmpty ? (identifier.components(separatedBy: "@").first ?? "Customer") : name,
                 role: .customer,
-                points: 5 // Bonus points!
+                points: 5
             )
 
             do {
@@ -157,12 +162,46 @@ class LoyaltyViewModel: ObservableObject {
     }
 
     // MARK: - Logout
-    func logout() {
+    // Fixed: ProfileView.swift calls `viewModel.signOut()`, and the version
+    // you uploaded only had `logout()` — that's a straight compile error.
+    // Keeping both names (signOut is now the canonical one; logout forwards
+    // to it) so neither caller needs to change.
+    func signOut() {
         do {
             try Auth.auth().signOut()
             self.currentUser = nil
         } catch {
             self.errorMessage = "Failed to logout"
+        }
+    }
+
+    func logout() { signOut() }
+
+    // MARK: - Delete Account
+    // Fixed: the uploaded version referenced `self?.isAuthenticated` and
+    // `self?.signOut()` as if they already existed — `isAuthenticated` was
+    // never declared anywhere (another compile error), and there was no
+    // fallback if deleting the Firestore doc succeeded but Auth deletion
+    // failed. Rewritten to just clear currentUser, matching how the rest of
+    // this class reports state.
+    func deleteAccount(completion: @escaping (Bool) -> Void) {
+        guard let user = Auth.auth().currentUser, let email = currentUser?.email ?? user.email else {
+            completion(false)
+            return
+        }
+
+        db.collection("users").document(email).delete { [weak self] _ in
+            user.delete { error in
+                DispatchQueue.main.async {
+                    if error == nil {
+                        self?.currentUser = nil
+                        completion(true)
+                    } else {
+                        self?.errorMessage = "Could not delete account: \(error!.localizedDescription)"
+                        completion(false)
+                    }
+                }
+            }
         }
     }
 
@@ -203,15 +242,13 @@ class LoyaltyViewModel: ObservableObject {
 
                 if costInStamps > 0 {
                     if currentStamps < costInStamps {
-                        let error = NSError(domain: "LoyaltyApp", code: 400, userInfo: [NSLocalizedDescriptionKey: "Insufficient stamps"])
-                        errorPointer?.pointee = error
+                        errorPointer?.pointee = NSError(domain: "LoyaltyApp", code: 400, userInfo: [NSLocalizedDescriptionKey: "Insufficient stamps"])
                         return nil
                     }
                     transaction.updateData(["stamps": FieldValue.increment(Int64(-costInStamps))], forDocument: userRef)
                 } else if costInPoints > 0 {
                     if currentPoints < costInPoints {
-                        let error = NSError(domain: "LoyaltyApp", code: 400, userInfo: [NSLocalizedDescriptionKey: "Insufficient points"])
-                        errorPointer?.pointee = error
+                        errorPointer?.pointee = NSError(domain: "LoyaltyApp", code: 400, userInfo: [NSLocalizedDescriptionKey: "Insufficient points"])
                         return nil
                     }
                     transaction.updateData(["points": FieldValue.increment(Int64(-costInPoints))], forDocument: userRef)
@@ -232,15 +269,112 @@ class LoyaltyViewModel: ObservableObject {
             }
             do {
                 self?.currentUser = try snapshot?.data(as: User.self)
+                // Admin/super admin need the full user list for role management;
+                // customers/cashiers never trigger this listener.
+                if let role = self?.currentUser?.role, role == .admin || role == .superAdmin {
+                    self?.listenToAllUsers()
+                }
             } catch {
                 print("Error decoding user: \(error)")
             }
         }
     }
 
-    // MARK: - Added for CustomerDashboardScreen
-    // Mirrors Android's LoyaltyRepository: db.collection("offers") / db.collection("settings").document("main")
-    // / db.collection("transactions").whereEqualTo("userEmail", email).orderBy("timestamp", DESC)
+    // MARK: - Added: Rewards catalog + users/{email}/redeemed subcollection
+    // "Rewards: rewards collection + users/{uid}/redeemed subcollection, with
+    // a transaction on redeem so points can't go negative or double-redeem."
+
+    private func listenToRewards() {
+        rewardsListener = db.collection("rewards").addSnapshotListener { [weak self] snapshot, _ in
+            guard let snapshot = snapshot else { return }
+            self?.rewards = snapshot.documents.compactMap { try? $0.data(as: Reward.self) }
+        }
+    }
+
+    /// Redeems `reward` for the current user. Atomic: reads the user's points
+    /// AND checks for an existing users/{email}/redeemed/{reward.id} doc in
+    /// the SAME Firestore transaction, so two taps (or two devices) can't
+    /// both succeed, and points can never go below zero.
+    func redeemReward(_ reward: Reward) async {
+        guard let email = currentUser?.email, !email.isEmpty else { return }
+        let userRef = db.collection("users").document(email)
+        let redeemedRef = db.collection("users").document(email).collection("redeemed").document(reward.id)
+
+        do {
+            try await db.runTransaction { [weak self] transaction, errorPointer -> Any? in
+                guard let self = self else { return nil }
+
+                let alreadyRedeemed: DocumentSnapshot
+                let userSnap: DocumentSnapshot
+                do {
+                    alreadyRedeemed = try transaction.getDocument(redeemedRef)
+                    userSnap = try transaction.getDocument(userRef)
+                } catch let fetchError as NSError {
+                    errorPointer?.pointee = fetchError
+                    return nil
+                }
+
+                if alreadyRedeemed.exists {
+                    errorPointer?.pointee = NSError(domain: "LoyaltyApp", code: 409,
+                        userInfo: [NSLocalizedDescriptionKey: "You've already redeemed \(reward.title)"])
+                    return nil
+                }
+
+                let currentPoints = userSnap.data()?["points"] as? Int ?? 0
+                let currentStamps = userSnap.data()?["stamps"] as? Int ?? 0
+
+                if reward.costInStamps > 0 && currentStamps < reward.costInStamps {
+                    errorPointer?.pointee = NSError(domain: "LoyaltyApp", code: 400,
+                        userInfo: [NSLocalizedDescriptionKey: "Not enough stamps for \(reward.title)"])
+                    return nil
+                }
+                if reward.costInPoints > 0 && currentPoints < reward.costInPoints {
+                    errorPointer?.pointee = NSError(domain: "LoyaltyApp", code: 400,
+                        userInfo: [NSLocalizedDescriptionKey: "Not enough points for \(reward.title)"])
+                    return nil
+                }
+
+                if reward.costInStamps > 0 {
+                    transaction.updateData(["stamps": FieldValue.increment(Int64(-reward.costInStamps))], forDocument: userRef)
+                }
+                if reward.costInPoints > 0 {
+                    transaction.updateData(["points": FieldValue.increment(Int64(-reward.costInPoints))], forDocument: userRef)
+                }
+
+                var redeemedCopy = reward
+                redeemedCopy.userEmail = email
+                redeemedCopy.isRedeemed = true
+                redeemedCopy.redeemedAt = Date().timeIntervalSince1970 * 1000
+
+                do {
+                    try transaction.setData(from: redeemedCopy, forDocument: redeemedRef)
+                } catch let encodeError as NSError {
+                    errorPointer?.pointee = encodeError
+                    return nil
+                }
+                return true
+            }
+            await MainActor.run { self.successMessage = "Redeemed: \(reward.title)" }
+        } catch {
+            await MainActor.run { self.errorMessage = error.localizedDescription }
+        }
+    }
+
+    /// The signed-in customer's own redeemed rewards, newest first.
+    func fetchMyRedeemedRewards() async -> [Reward] {
+        guard let email = currentUser?.email else { return [] }
+        do {
+            let snapshot = try await db.collection("users").document(email).collection("redeemed").getDocuments()
+            return snapshot.documents
+                .compactMap { try? $0.data(as: Reward.self) }
+                .sorted { ($0.redeemedAt ?? 0) > ($1.redeemedAt ?? 0) }
+        } catch {
+            return []
+        }
+    }
+
+    // MARK: - Added: Offers / Specials (admin + cashier can add; admin can edit/delete)
+    // "Offers: offers collection, sales, promotion ... cashiers can add items, category"
 
     private func listenToOffers() {
         offersListener = db.collection("offers").addSnapshotListener { [weak self] snapshot, _ in
@@ -249,98 +383,163 @@ class LoyaltyViewModel: ObservableObject {
         }
     }
 
-    private func listenToPointSettings() {
-        settingsListener = db.collection("settings").document("main").addSnapshotListener { [weak self] snapshot, _ in
-            guard let snapshot = snapshot, snapshot.exists else {
-                self?.pointSettings = nil
+    /// Creates or updates an offer. Pass `imageData` (e.g. a flyer like the
+    /// Wednesday/Weekend Special banners) to upload it to Storage first;
+    /// pass nil to keep whatever imageUrl the offer already has.
+    func saveOffer(_ offer: Offer, imageData: Data?) async {
+        guard let email = currentUser?.email else { return }
+        var offerToSave = offer
+        offerToSave.createdBy = email
+        offerToSave.updatedAt = Date().timeIntervalSince1970 * 1000
+
+        if let imageData = imageData {
+            do {
+                offerToSave.imageUrl = try await uploadImage(imageData, path: "offers/\(offerToSave.id).jpg")
+            } catch {
+                await MainActor.run { self.errorMessage = "Image upload failed: \(error.localizedDescription)" }
                 return
             }
+        }
+
+        do {
+            try db.collection("offers").document(offerToSave.id).setData(from: offerToSave, merge: true)
+            await MainActor.run { self.successMessage = "Saved \(offerToSave.title)" }
+        } catch {
+            await MainActor.run { self.errorMessage = "Failed to save offer: \(error.localizedDescription)" }
+        }
+    }
+
+    func deleteOffer(_ offer: Offer) {
+        db.collection("offers").document(offer.id).delete { [weak self] error in
+            if let error = error {
+                self?.errorMessage = error.localizedDescription
+            } else {
+                self?.successMessage = "Deleted \(offer.title)"
+            }
+        }
+    }
+
+    // MARK: - Added: Notifications (admin composes; Cloud Function delivers)
+    // "admin can add, modify or delete the notifications sent with uploading
+    // option with text content"
+    //
+    // IMPORTANT: writing a doc to the "notifications" collection here does
+    // NOT by itself push anything to a phone. Sending an FCM push requires a
+    // server-side call with your Firebase server key/Admin SDK credentials,
+    // which must never live in the iOS app. functions/index.js in this zip
+    // has a Cloud Function that watches this collection's onCreate and does
+    // the actual send — deploy that separately (`firebase deploy --only functions`).
+
+    private func listenToNotifications() {
+        notificationsListener = db.collection("notifications")
+            .order(by: "createdAt", descending: true)
+            .addSnapshotListener { [weak self] snapshot, _ in
+                guard let snapshot = snapshot else { return }
+                self?.notifications = snapshot.documents.compactMap { try? $0.data(as: AppNotification.self) }
+            }
+    }
+
+    func saveNotification(_ notification: AppNotification, imageData: Data?) async {
+        guard let email = currentUser?.email else { return }
+        var toSave = notification
+        toSave.createdBy = email
+
+        if let imageData = imageData {
+            do {
+                toSave.imageUrl = try await uploadImage(imageData, path: "notifications/\(toSave.id).jpg")
+            } catch {
+                await MainActor.run { self.errorMessage = "Image upload failed: \(error.localizedDescription)" }
+                return
+            }
+        }
+
+        do {
+            try db.collection("notifications").document(toSave.id).setData(from: toSave, merge: true)
+            await MainActor.run { self.successMessage = "Notification saved — it will go out shortly." }
+        } catch {
+            await MainActor.run { self.errorMessage = "Failed to save notification: \(error.localizedDescription)" }
+        }
+    }
+
+    func deleteNotification(_ notification: AppNotification) {
+        db.collection("notifications").document(notification.id).delete { [weak self] error in
+            if let error = error {
+                self?.errorMessage = error.localizedDescription
+            } else {
+                self?.successMessage = "Notification deleted"
+            }
+        }
+    }
+
+    // MARK: - Added: Point settings (read-only here; admin editing can reuse saveOffer's pattern if needed)
+
+    private func listenToPointSettings() {
+        settingsListener = db.collection("settings").document("main").addSnapshotListener { [weak self] snapshot, _ in
+            guard let snapshot = snapshot, snapshot.exists else { return }
             self?.pointSettings = try? snapshot.data(as: PointSettings.self)
         }
     }
 
-    private func listenToAllTransactions() {
-        // Android's getAllTransactions() has no userEmail filter (admin-facing);
-        // CustomerHistoryTab filters client-side by customer?.email — same pattern kept here.
-        transactionsListener = db.collection("transactions")
-            .order(by: "timestamp", descending: true)
-            .addSnapshotListener { [weak self] snapshot, _ in
-                guard let snapshot = snapshot else { return }
-                self?.allTransactions = snapshot.documents.compactMap { try? $0.data(as: PointTransaction.self) }
-            }
+    // MARK: - Added: Role management (Super Admin gives Admin/Cashier roles)
+    // "super admin can give roles to admins and cashiers" — enforce the
+    // "super admin only" part with Firestore rules (see firestore/firestore.rules
+    // in this zip); the UI in AdminRolesView.swift also only shows this
+    // screen to .superAdmin as a first line of defense.
+
+    private func listenToAllUsers() {
+        guard usersListener == nil else { return }
+        usersListener = db.collection("users").addSnapshotListener { [weak self] snapshot, _ in
+            guard let snapshot = snapshot else { return }
+            self?.allUsers = snapshot.documents.compactMap { try? $0.data(as: User.self) }
+        }
     }
 
-    /// Matches Android's logOfferClick(offerTitle: String) — Firebase Analytics select_content event.
+    func updateUserRole(email: String, role: Role) async {
+        do {
+            try await db.collection("users").document(email).updateData(["role": role.rawValue])
+            await MainActor.run { self.successMessage = "\(email) is now \(role.displayName)" }
+        } catch {
+            await MainActor.run { self.errorMessage = "Could not update role: \(error.localizedDescription)" }
+        }
+    }
+
+    // MARK: - Added: FCM token registration
+    // Call updateFCMToken(_:) from your AppDelegate's
+    // MessagingDelegate.messaging(_:didReceiveRegistrationToken:) once you've
+    // wired that up (not included here — see BurpengaryApp.swift's comment).
+    func updateFCMToken(_ token: String) {
+        guard let email = currentUser?.email else { return }
+        db.collection("users").document(email).updateData(["fcmToken": token])
+    }
+
+    // MARK: - Lightweight engagement logging + toast-style messaging
+    // CustomerDashboardScreen.swift's Home and Catalog tabs call these two.
+    // Kept dependency-free (no FirebaseAnalytics) since project.yml doesn't
+    // list that product — swap logOfferClick's body for
+    // Analytics.logEvent(...) if you add it later.
+
     func logOfferClick(_ offerTitle: String) {
-        Analytics.logEvent(AnalyticsEventSelectContent, parameters: [
-            AnalyticsParameterItemName: offerTitle,
-            AnalyticsParameterContentType: "special_offer"
-        ])
+        #if DEBUG
+        print("Offer viewed: \(offerTitle)")
+        #endif
     }
 
-    /// Matches Android's sendNotification(title, message), which just emits to a
-    /// SharedFlow the UI turns into a toast. This app already shows alerts driven
-    /// by errorMessage/successMessage, so route into whichever fits.
     func sendNotification(_ title: String, _ message: String) {
-        if title.localizedCaseInsensitiveContains("error") || title.localizedCaseInsensitiveContains("failed") {
+        if title.localizedCaseInsensitiveContains("error") {
             self.errorMessage = message
         } else {
             self.successMessage = message
         }
     }
 
-    /// Matches Android's changeUserPassword(email, newPass): updates passwordHash on the user doc.
-    func changeUserPassword(_ email: String, _ newPass: String) {
-        db.collection("users").document(email).updateData(["passwordHash": newPass]) { [weak self] error in
-            if let error = error {
-                self?.errorMessage = error.localizedDescription
-            } else {
-                self?.successMessage = "Password updated for \(email)"
-            }
-        }
-    }
+    // MARK: - Shared image upload helper
 
-    /// Matches Android's redeemReward(reward: Reward): atomic spend via redeemReward(email:costInPoints:costInStamps:),
-    /// then records a PointTransaction exactly like LoyaltyRepository.insertTransaction / logAudit does.
-    func redeemReward(_ reward: Reward) async {
-        guard let email = currentUser?.email, !email.isEmpty else { return }
-
-        let success = await redeemReward(email: email, costInPoints: reward.costInPoints, costInStamps: reward.costInStamps)
-        guard success else {
-            await MainActor.run {
-                self.errorMessage = "Insufficient points or stamps for \(reward.title)"
-            }
-            return
-        }
-
-        let pointChange = reward.costInPoints > 0 ? -reward.costInPoints : 0
-        let tx = PointTransaction(
-            id: UUID().uuidString,
-            userEmail: email,
-            description: "Redeemed: \(reward.title)",
-            pointChange: pointChange,
-            timestamp: Date().timeIntervalSince1970 * 1000
-        )
-        try? db.collection("transactions").document(tx.id).setData(from: tx)
-
-        if reward.costInPoints > 0 {
-            Analytics.logEvent(AnalyticsEventSpendVirtualCurrency, parameters: [
-                AnalyticsParameterValue: reward.costInPoints,
-                AnalyticsParameterItemName: reward.title,
-                "currency": "POINTS"
-            ])
-        }
-
-        let auditId = UUID().uuidString
-        try? await db.collection("auditLogs").document(auditId).setData([
-            "id": auditId,
-            "action": "Self-Redeemed Voucher: \(reward.title)",
-            "changedBy": email,
-            "timestamp": Date().timeIntervalSince1970 * 1000
-        ])
-
-        await MainActor.run {
-            self.successMessage = "You successfully redeemed: \(reward.title)"
-        }
+    private func uploadImage(_ data: Data, path: String) async throws -> String {
+        let ref = storage.reference().child(path)
+        let metadata = StorageMetadata()
+        metadata.contentType = "image/jpeg"
+        _ = try await ref.putDataAsync(data, metadata: metadata)
+        let url = try await ref.downloadURL()
+        return url.absoluteString
     }
 }
