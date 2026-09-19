@@ -677,6 +677,42 @@ class LoyaltyViewModel: ObservableObject {
         }
     }
 
+    // MARK: Categories (AdminView)
+
+    func addCategory(_ name: String) {
+        let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return }
+        if categories.contains(where: { $0.name.caseInsensitiveCompare(clean) == .orderedSame }) {
+            errorMessage = "Category \"\(clean)\" already exists"
+            return
+        }
+        db.collection("categories").addDocument(data: ["name": clean]) { [weak self] error in
+            DispatchQueue.main.async {
+                if let error = error {
+                    self?.errorMessage = "Could not add category: \(error.localizedDescription)"
+                } else {
+                    self?.successMessage = "Added category \(clean)"
+                    self?.recordAudit("Added category \(clean)")
+                }
+            }
+        }
+    }
+
+    func addCategory(name: String) { addCategory(name) }
+
+    func deleteCategory(_ category: MenuCategory) {
+        guard let id = category.id else { return }
+        db.collection("categories").document(id).delete { [weak self] error in
+            DispatchQueue.main.async {
+                if let error = error {
+                    self?.errorMessage = "Could not delete category: \(error.localizedDescription)"
+                } else {
+                    self?.recordAudit("Deleted category \(category.name)")
+                }
+            }
+        }
+    }
+
     /// Cashier redeems points on behalf of a customer. Atomic: checks the balance and deducts in one transaction,
     /// and records a negative ledger entry.
     func redeemPointsCashier(email: String, points: Int) {
