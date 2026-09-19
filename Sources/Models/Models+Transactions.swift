@@ -2,15 +2,15 @@ import Foundation
 import FirebaseFirestore
 
 /// One row in the points ledger (Firestore collection: "transactions").
-/// `timestamp` is milliseconds since 1970, matching the Android app.
+/// `timestamp` is a Double of milliseconds since 1970 (CustomerDashboardScreen does `tx.timestamp / 1000`).
 struct PointTransaction: Identifiable, Codable {
     @DocumentID var id: String?
     var userEmail: String
     var description: String
     var pointChange: Int
-    var timestamp: Int64
+    var timestamp: Double
 
-    var date: Date { Date(timeIntervalSince1970: Double(timestamp) / 1000) }
+    var date: Date { Date(timeIntervalSince1970: timestamp / 1000) }
 }
 
 /// One row in the Super Admin audit trail (Firestore collection: "auditLogs").
