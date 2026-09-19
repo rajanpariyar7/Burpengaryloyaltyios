@@ -33,6 +33,7 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         NSCameraUsageDescription: "Burpengary Market Loyalty uses your camera to scan loyalty barcodes and QR codes."
+        ITSAppUsesNonExemptEncryption: false
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: false
         # TODO: replace REPLACE_WITH_REVERSED_CLIENT_ID with the REVERSED_CLIENT_ID
