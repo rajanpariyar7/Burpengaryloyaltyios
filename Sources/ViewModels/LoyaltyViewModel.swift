@@ -677,6 +677,52 @@ class LoyaltyViewModel: ObservableObject {
         }
     }
 
+    /// Cashier redeems points on behalf of a customer. Atomic: checks the balance and deducts in one transaction,
+    /// and records a negative ledger entry.
+    func redeemPointsCashier(email: String, points: Int) {
+        guard !email.isEmpty, points > 0 else {
+            errorMessage = "Enter a valid number of points"
+            return
+        }
+        let userRef = db.collection("users").document(email)
+        let txRef = db.collection("transactions").document()
+        let staffEmail = currentUser?.email ?? ""
+
+        db.runTransaction({ transaction, errorPointer -> Any? in
+            let snapshot: DocumentSnapshot
+            do {
+                snapshot = try transaction.getDocument(userRef)
+            } catch let fetchError as NSError {
+                errorPointer?.pointee = fetchError
+                return nil
+            }
+            let current = snapshot.data()?["points"] as? Int ?? 0
+            if current < points {
+                errorPointer?.pointee = NSError(
+                    domain: "LoyaltyApp", code: 400,
+                    userInfo: [NSLocalizedDescriptionKey: "Customer only has \(current) points"])
+                return nil
+            }
+            transaction.updateData(["points": FieldValue.increment(Int64(-points))], forDocument: userRef)
+            transaction.setData([
+                "userEmail": email,
+                "description": "Redeemed \(points) points",
+                "pointChange": -points,
+                "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+                "processedBy": staffEmail
+            ], forDocument: txRef)
+            return true
+        }) { [weak self] _, error in
+            DispatchQueue.main.async {
+                if let error = error {
+                    self?.errorMessage = error.localizedDescription
+                } else {
+                    self?.successMessage = "Redeemed \(points) points for \(email)"
+                }
+            }
+        }
+    }
+
     func changeUserRole(email: String, newRole: Role) {
         Task {
             await updateUserRole(email: email, role: newRole)
