@@ -677,6 +677,23 @@ class LoyaltyViewModel: ObservableObject {
         }
     }
 
+    // MARK: Quick-add offer (AdminView "Publish Product")
+
+    func addOffer(title: String, price: String, description: String, category: String) {
+        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanPrice = price.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanTitle.isEmpty, !cleanPrice.isEmpty else {
+            errorMessage = "Product title and price are required"
+            return
+        }
+        var offer = Offer()
+        offer.title = cleanTitle
+        offer.price = cleanPrice
+        offer.description = description
+        offer.category = category.isEmpty ? "General" : category
+        Task { await saveOffer(offer, imageData: nil) }
+    }
+
     // MARK: Categories (AdminView)
 
     func addCategory(_ name: String) {
