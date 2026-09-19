@@ -35,9 +35,7 @@ targets:
         NSCameraUsageDescription: "Burpengary Market Loyalty uses your camera to scan loyalty barcodes and QR codes."
         ITSAppUsesNonExemptEncryption: false
         NSAppTransportSecurity:
-          NSAllowsArbitraryLoads: false
-        # TODO: replace REPLACE_WITH_REVERSED_CLIENT_ID with the REVERSED_CLIENT_ID
-        # value from your downloaded GoogleService-Info.plist (see README).
+          NSAllowsArbitraryLoads: false               
         CFBundleURLTypes:
           - CFBundleURLSchemes:
               - com.googleusercontent.apps.222042395227j-8rgoppfi1nod55sskq1rd8i0rqajctlm
