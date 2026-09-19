@@ -22,8 +22,6 @@ targets:
       - path: Resources/Assets.xcassets
     info:
       path: Sources/Info.plist
-      <key>NSCameraUsageDescription</key>
-<string>Burpengary Market Loyalty uses your camera to scan loyalty barcodes and QR codes.</string>
       properties:
         CFBundleDisplayName: Burpengary Fruit Market
         UILaunchScreen: {}
